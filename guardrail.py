@@ -21,7 +21,7 @@ HARD_INJECTION_PATTERNS: Tuple[re.Pattern[str], ...] = (
 )
 
 SOFT_INJECTION_PATTERNS: Tuple[re.Pattern[str], ...] = (
-    re.compile(r"\bact\s+as\b", re.I),
+    re.compile(r"\bacHARD_INJECTION_PATTERNSt\s+as\b", re.I),
     re.compile(r"\brole[\s-]?play\b", re.I),
     re.compile(r"\bhypothetically\b", re.I),
     re.compile(r"without\s+(any\s+)?(restrictions?|limits?|rules?)", re.I),
