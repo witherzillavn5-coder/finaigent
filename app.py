@@ -4,8 +4,11 @@ from __future__ import annotations
 
 import os
 import time
+from datetime import datetime  # mốc giờ cho stats_history
+from pathlib import Path  # đường dẫn file audit log
 from typing import List
 
+import pandas as pd  # DataFrame cho line_chart sidebar
 import streamlit as st
 from dotenv import load_dotenv
 from openai import OpenAI
@@ -32,6 +35,11 @@ def _init_state() -> None:
         st.session_state.pii_redacted = 0
     if "request_times" not in st.session_state:
         st.session_state.request_times = []
+    if "stats_history" not in st.session_state:
+        # Lịch sử điểm dữ liệu cho 2 biểu đồ sidebar
+        st.session_state.stats_history = []
+    if "blocked_attacks" not in st.session_state:
+        st.session_state.blocked_attacks = 0
 
 
 def _rate_limit_ok() -> bool:
@@ -89,6 +97,18 @@ def _call_llm(client: OpenAI, user_text: str) -> str:
     return FALLBACK_REPLY
 
 
+def _record_stats() -> None:
+    """Ghi mốc blocked/PII theo thời gian cho biểu đồ sidebar."""
+    # Đồng bộ alias blocked_attacks với metric attacks_blocked
+    st.session_state.blocked_attacks = int(st.session_state.attacks_blocked)
+    # Thêm một điểm thời gian khi có sự kiện bảo mật
+    st.session_state.stats_history.append({
+        "time": datetime.now().strftime("%H:%M:%S"),
+        "blocked": st.session_state.blocked_attacks,
+        "pii": st.session_state.pii_redacted,
+    })
+
+
 def main() -> None:
     """Khởi chạy giao diện chat có guardrail."""
     st.set_page_config(page_title="FinGuard Agent", page_icon="🛡️", layout="centered")
@@ -101,6 +121,44 @@ def main() -> None:
         st.subheader("Metrics")
         st.metric("Attacks Blocked", st.session_state.attacks_blocked)
         st.metric("PII Redacted", st.session_state.pii_redacted)
+
+        # Biểu đồ sau metrics
+        st.divider()
+
+        # Số cuộc tấn công bị chặn theo thời gian
+        st.subheader("📊 Attacks over time")
+        if st.session_state.stats_history:
+            df = pd.DataFrame(st.session_state.stats_history)
+            st.line_chart(df, x="time", y="blocked", height=150)
+        else:
+            st.caption("Chưa có dữ liệu")
+
+        # Số PII đã che theo thời gian
+        st.subheader("📊 PII over time")
+        if st.session_state.stats_history:
+            df = pd.DataFrame(st.session_state.stats_history)
+            st.line_chart(df, x="time", y="pii", height=150)
+        else:
+            st.caption("Chưa có dữ liệu")
+
+        # Tải file nhật ký kiểm toán JSONL
+        st.divider()
+        audit_path = Path("logs/audit.jsonl")
+        if audit_path.exists() and audit_path.stat().st_size > 0:
+            with open(audit_path, "r", encoding="utf-8") as f:
+                audit_content = f.read()
+
+            st.download_button(
+                label="📥 Tải Audit Log",
+                data=audit_content,
+                file_name="audit.jsonl",
+                mime="application/json",
+                use_container_width=True,
+            )
+            st.caption(f"Log có {len(audit_content.splitlines())} dòng")
+        else:
+            st.caption("📭 Chưa có log")
+
         if st.button("Xóa lịch sử"):
             st.session_state.messages = []
             st.session_state.request_times = []
@@ -133,6 +191,7 @@ def main() -> None:
 
     if not result.allowed:
         st.session_state.attacks_blocked += 1
+        st.session_state.blocked_attacks += 1
         audit.log_event(
             event_type="blocked",
             layer=result.layer,
@@ -140,6 +199,8 @@ def main() -> None:
             risk_score=result.risk_score,
             extra={"pii_count": 0},
         )
+        # Ghi sự kiện blocked cho biểu đồ
+        _record_stats()
         error_text = f"⛔ Yêu cầu bị chặn ({result.layer}): {result.reason}"
         with st.chat_message("assistant"):
             st.error(error_text)
@@ -155,6 +216,8 @@ def main() -> None:
             risk_score=result.risk_score,
             extra={"pii_count": len(result.findings)},
         )
+        # Ghi sự kiện PII redacted cho biểu đồ
+        _record_stats()
         st.warning("Đã phát hiện và che thông tin nhạy cảm trước khi gửi tới mô hình.")
 
     client = _get_client()
@@ -180,6 +243,9 @@ def main() -> None:
     display = output.processed_text
     if not output.allowed:
         st.session_state.attacks_blocked += 1
+        st.session_state.blocked_attacks += 1
+        # Ghi sự kiện output bị chặn cho biểu đồ
+        _record_stats()
         with st.chat_message("assistant"):
             st.error(display)
         st.session_state.messages.append({"role": "assistant", "content": display})
