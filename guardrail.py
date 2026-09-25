@@ -1,4 +1,13 @@
-"""Công cụ bảo vệ đầu vào/đầu ra cho FinGuard Agent."""
+"""FinGuard Security Guardrail Engine.
+
+Bao gồm 6 lớp:
+- Normalize Unicode (NFKC + zero-width)
+- Detect prompt injection (hard + soft + heuristic)
+- Luhn check cho thẻ tín dụng
+- Mask PII (SSN, credit card, OTP, CVV)
+- Compliance check (wire transfer, bypass auth, ...)
+- Output validator (leak, risky advice, PII)
+"""
 
 from __future__ import annotations
 
@@ -7,125 +16,100 @@ import unicodedata
 from dataclasses import dataclass, field
 from typing import List, Tuple
 
-ZERO_WIDTH_CHARS: str = "\u200b\u200c\u200d\u2060\ufeff\u180e\u200e\u200f"
 
-HARD_INJECTION_PATTERNS: Tuple[re.Pattern[str], ...] = (
-    re.compile(r"ignore\s+(all\s+)?(previous|prior|above)\s*instructions?", re.I),
-    re.compile(r"forget\s+(all\s+)?(previous|prior|your)\s+(instructions?|rules?)", re.I),
-    re.compile(r"you\s+are\s+now\s+(a|an|in)\b", re.I),
-    re.compile(r"\b(jailbreak|dan\s*mode|developer\s*mode)\b", re.I),
-    re.compile(r"reveal\s+(your\s+)?(system\s+)?prompt", re.I),
-    re.compile(r"override\s+(the\s+)?(safety|guardrail|security|rules?)", re.I),
-    re.compile(r"(disable|bypass)\s+(your\s+)?(safety|filter|guardrail|restrictions?)", re.I),
-    re.compile(r"bỏ\s+qua\s+(mọi\s+)?(hướng\s+dẫn|quy\s+tắc|chỉ\s+thị)", re.I),
-)
+# ============================================================
+# LỚP 0 — NORMALIZE
+# ============================================================
 
-SOFT_INJECTION_PATTERNS: Tuple[re.Pattern[str], ...] = (
-    re.compile(r"\bacHARD_INJECTION_PATTERNSt\s+as\b", re.I),
-    re.compile(r"\brole[\s-]?play\b", re.I),
-    re.compile(r"\bhypothetically\b", re.I),
-    re.compile(r"without\s+(any\s+)?(restrictions?|limits?|rules?)", re.I),
-    re.compile(r"pretend\s+(you\s+)?(have\s+)?no\s+(rules?|limits?|restrictions?)", re.I),
-    re.compile(r"from\s+now\s+on\s+you", re.I),
-)
-
-COMPLIANCE_RULES: Tuple[Tuple[re.Pattern[str], str], ...] = (
-    (
-        re.compile(
-            r"\b(wire\s*transfer|chuyển\s*khoản|chuyen\s*khoan|send\s+money|"
-            r"bank\s+transfer|swift\s+transfer)\b",
-            re.I,
-        ),
-        "Yêu cầu chuyển khoản / wire transfer bị chặn.",
-    ),
-    (
-        re.compile(
-            r"\b(bypass\s+(auth|authentication|login|2fa|mfa)|vượt\s+qua\s+"
-            r"(xác\s+thực|đăng\s+nhập)|skip\s+(auth|2fa|otp))\b",
-            re.I,
-        ),
-        "Yêu cầu bypass xác thực bị chặn.",
-    ),
-    (
-        re.compile(
-            r"\b(modify|change|increase|inflate)\s+(account\s+)?(balance|số\s+dư)|"
-            r"sửa\s+số\s+dư|thay\s+đổi\s+số\s+dư",
-            re.I,
-        ),
-        "Yêu cầu thay đổi số dư bị chặn.",
-    ),
-    (
-        re.compile(
-            r"\b(disable|tắt|turn\s+off)\s+(2fa|mfa|two[\s-]?factor|"
-            r"xác\s+thực\s+hai\s+yếu\s+tố)\b",
-            re.I,
-        ),
-        "Yêu cầu tắt 2FA bị chặn.",
-    ),
-    (
-        re.compile(
-            r"\b(hack|phishing|fraud|launder|rửa\s+tiền|gian\s+lận|"
-            r"lừa\s+đảo|money\s+laundering)\b",
-            re.I,
-        ),
-        "Yêu cầu liên quan hack/gian lận/rửa tiền bị chặn.",
-    ),
-)
-
-SSN_RE: re.Pattern[str] = re.compile(r"\b(\d{3}-\d{2}-\d{4})\b")
-CARD_RE: re.Pattern[str] = re.compile(r"(?:\d[\s-]?){13,19}")
-OTP_RE: re.Pattern[str] = re.compile(
-    r"(?i)(?:otp|one[\s-]?time(?:\s+pass(?:word|code)?)?|mã\s+otp|"
-    r"mã\s+xác\s+thực)\s*[:#-]?\s*(\d{4,8})"
-)
-CVV_CONTEXT_RE: re.Pattern[str] = re.compile(
-    r"(?i)\b(cvv|cvc|cid|security\s+code|mã\s+bảo\s+mật)\b"
-)
-CVV_NEAR_RE: re.Pattern[str] = re.compile(
-    r"(?i)(?:cvv|cvc|cid|security\s+code|mã\s+bảo\s+mật)\s*[:#-]?\s*(\d{3,4})"
-)
-
-SYSTEM_LEAK_RE: re.Pattern[str] = re.compile(
-    r"(?i)(system\s+prompt|hướng\s+dẫn\s+nội\s+bộ|you\s+are\s+fin\s*guard|"
-    r"bạn\s+là\s+fin\s*guard|quy\s+tắc\s+bắt\s+buộc)"
-)
-RISKY_ADVICE_RE: re.Pattern[str] = re.compile(
-    r"(?i)\b(buy\s+now|guaranteed\s+return|lợi\s+nhuận\s+đảm\s+bảo|"
-    r"mua\s+ngay|chắc\s+chắn\s+sinh\s+lời)\b"
-)
-
-
-@dataclass
-class GuardrailResult:
-    """Kết quả một lớp kiểm tra bảo mật."""
-
-    allowed: bool
-    layer: str
-    reason: str
-    risk_score: float
-    processed_text: str
-    findings: List[str] = field(default_factory=list)
+ZERO_WIDTH_RE = re.compile(r"[\u200b-\u200f\u202a-\u202e\u2060-\u206f\ufeff]")
 
 
 def normalize_text(text: str) -> str:
-    """Chuẩn hóa Unicode NFKC, bỏ ký tự zero-width và gộp khoảng trắng."""
+    """Chuẩn hóa Unicode: NFKC + loại zero-width + gộp khoảng trắng."""
     if not text:
         return ""
-    normalized = unicodedata.normalize("NFKC", text)
-    translator = str.maketrans("", "", ZERO_WIDTH_CHARS)
-    cleaned = normalized.translate(translator)
-    return re.sub(r"\s+", " ", cleaned).strip()
+    text = unicodedata.normalize("NFKC", text)
+    text = ZERO_WIDTH_RE.sub("", text)
+    text = re.sub(r"\s+", " ", text)
+    return text.strip()
+
+
+# ============================================================
+# LỚP 1 — INJECTION DETECTOR
+# ============================================================
+
+_HARD_PATTERNS_RAW = [
+    r"ignore\s+(all\s+)?(previous|prior|above)\s*instructions?",
+    r"forget\s+(all\s+)?(previous|prior|your)\s+(instructions?|rules?)",
+    r"you\s+are\s+now\s+(an?\s+)?(unrestricted|unfiltered|jailbroken)",
+    r"\b(jailbreak|dan\s*mode|developer\s*mode)\b",
+    r"reveal\s+(your\s+)?(system\s+)?prompt",
+    r"override\s+(the\s+)?(safety|guardrail|security|rules?)",
+    r"(disable|bypass)\s+(your\s+)?(safety|filter|guardrail|restrictions?)",
+    r"bỏ\s+qua\s+(mọi\s+)?(hướng\s+dẫn|quy\s+tắc|chỉ\s+thị)",
+    r"system\s+prompt\s+(leak|reveal|show)",
+]
+
+_SOFT_PATTERNS_RAW = [
+    r"\bact\s+as\b",
+    r"\brole[\s-]?play\b",
+    r"\bhypothetical(ly)?\b",
+    r"\bpretend\s+(to\s+be|you\s+are)\b",
+    r"\bunrestricted\b",
+    r"\bwithout\s+(any\s+)?restrictions?\b",
+    r"\bno\s+limitations?\b",
+]
+
+HARD_INJECTION_PATTERNS = [re.compile(p, re.I) for p in _HARD_PATTERNS_RAW]
+SOFT_INJECTION_PATTERNS = [re.compile(p, re.I) for p in _SOFT_PATTERNS_RAW]
+
+
+def detect_prompt_injection(text: str) -> Tuple[bool, float, str]:
+    """Phát hiện prompt injection. Trả (is_injection, score, reason)."""
+    if not text:
+        return False, 0.0, ""
+
+    normalized = normalize_text(text)
+
+    for pattern in HARD_INJECTION_PATTERNS:
+        if pattern.search(normalized):
+            return True, 1.0, f"hard pattern matched: {pattern.pattern[:60]}"
+
+    soft_hits = sum(1 for p in SOFT_INJECTION_PATTERNS if p.search(normalized))
+    score = min(soft_hits * 0.2, 0.9)
+
+    if score >= 0.6:
+        return True, score, f"soft score={score:.2f}, hits={soft_hits}"
+
+    return False, score, ""
+
+
+# ============================================================
+# LỚP 2 — PII MASKER
+# ============================================================
+
+SSN_PATTERN = re.compile(r"\b\d{3}-\d{2}-\d{4}\b")
+
+OTP_PATTERN = re.compile(
+    r"(?i)(?:mã\s+otp|mã\s+xác\s+thực|otp|one[\s-]?time(?:\s+pass(?:word|code)?)?)"
+    r"\s*(?:là|is|[:#-])?\s*\d{4,8}"
+)
+
+CVV_PATTERN = re.compile(
+    r"(?i)\b(?:cvv|cvc|security\s*code)\s*[:=#-]?\s*\d{3,4}\b"
+)
+
+CARD_PATTERN = re.compile(r"\b(?:\d[ -]?){12,18}\d\b")
 
 
 def luhn_check(number: str) -> bool:
-    """Kiểm tra dãy số theo thuật toán Luhn (thẻ tín dụng)."""
+    """Kiểm tra số thẻ tín dụng bằng thuật toán Luhn."""
     digits = re.sub(r"\D", "", number)
-    if not digits or not digits.isdigit():
+    if not (13 <= len(digits) <= 19):
         return False
     total = 0
-    reverse = digits[::-1]
-    for i, ch in enumerate(reverse):
-        n = ord(ch) - 48
+    for i, ch in enumerate(reversed(digits)):
+        n = int(ch)
         if i % 2 == 1:
             n *= 2
             if n > 9:
@@ -134,170 +118,134 @@ def luhn_check(number: str) -> bool:
     return total % 10 == 0
 
 
-def detect_prompt_injection(text: str) -> Tuple[bool, float, str]:
-    """Phát hiện prompt injection bằng pattern cứng, mềm và heuristic.
-
-    Trả về (bị_phát_hiện, điểm_rủi_ro, lý_do).
-    """
-    normalized = normalize_text(text)
-    if not normalized:
-        return False, 0.0, ""
-
-    for pattern in HARD_INJECTION_PATTERNS:
-        if pattern.search(normalized):
-            return True, 1.0, "Phát hiện prompt injection (hard pattern)."
-
-    score = 0.0
-    matched_soft: List[str] = []
-    for pattern in SOFT_INJECTION_PATTERNS:
-        if pattern.search(normalized):
-            score += 0.35
-            matched_soft.append(pattern.pattern)
-
-    lowered = normalized.lower()
-    if lowered.count("ignore") >= 2 and "instruction" in lowered:
-        score += 0.3
-    if "system prompt" in lowered or "system_prompt" in lowered:
-        score += 0.4
-    if re.search(r"[A-Z]{8,}", normalized) and "jail" in lowered:
-        score += 0.2
-
-    score = min(score, 1.0)
-    if score >= 0.6:
-        reason = "Phát hiện prompt injection (soft/heuristic)."
-        return True, score, reason
-    if matched_soft:
-        return False, score, "Dấu hiệu injection nhẹ, chưa đủ ngưỡng chặn."
-    return False, 0.0, ""
-
-
 def mask_pii(text: str) -> Tuple[str, List[str]]:
-    """Che PII: SSN, thẻ (Luhn), OTP, CVV khi có ngữ cảnh."""
-    findings: List[str] = []
-    result = text
+    """Che PII. Trả (text đã mask, danh sách loại PII tìm thấy)."""
+    if not text:
+        return "", []
 
-    def _mask_ssn(match: re.Match[str]) -> str:
+    findings: List[str] = []
+    masked = text
+
+    def ssn_repl(m):
         findings.append("ssn")
         return "[SSN_REDACTED]"
 
-    result = SSN_RE.sub(_mask_ssn, result)
+    masked = SSN_PATTERN.sub(ssn_repl, masked)
 
-    def _mask_card(match: re.Match[str]) -> str:
-        raw = match.group(0)
-        digits = re.sub(r"\D", "", raw)
-        if 13 <= len(digits) <= 19 and luhn_check(digits):
+    def otp_repl(m):
+        findings.append("otp")
+        return "[OTP_REDACTED]"
+
+    masked = OTP_PATTERN.sub(otp_repl, masked)
+
+    def cvv_repl(m):
+        findings.append("cvv")
+        return "[CVV_REDACTED]"
+
+    masked = CVV_PATTERN.sub(cvv_repl, masked)
+
+    def card_repl(m):
+        digits = re.sub(r"\D", "", m.group(0))
+        if luhn_check(digits):
             findings.append("credit_card")
             return "[CARD_REDACTED]"
-        return raw
+        return m.group(0)
 
-    result = CARD_RE.sub(_mask_card, result)
+    masked = CARD_PATTERN.sub(card_repl, masked)
 
-    def _mask_otp(match: re.Match[str]) -> str:
-        findings.append("otp")
-        return match.group(0).replace(match.group(1), "[OTP_REDACTED]")
+    return masked, findings
 
-    result = OTP_RE.sub(_mask_otp, result)
 
-    if CVV_CONTEXT_RE.search(result):
+# ============================================================
+# LỚP 3 — COMPLIANCE CHECK
+# ============================================================
 
-        def _mask_cvv(match: re.Match[str]) -> str:
-            findings.append("cvv")
-            return match.group(0).replace(match.group(1), "[CVV_REDACTED]")
+_COMPLIANCE_RAW = [
+    (r"\b(authorize|execute|perform|make|do)\s+(this|the|a)\s+(wire\s+)?transfer\b", "wire transfer"),
+    (r"\bwire\s+transfer\b", "wire transfer"),
+    (r"\bbypass\s+(my|the|your)?\s*(bank\s+)?(authentication|auth|login|2fa|mfa)\b", "bypass auth"),
+    (r"\b(modify|change|increase|inflate|edit)\s+(my|the|an?)?\s*(account\s+)?balance\b", "modify balance"),
+    (r"\bdisable\s+(2fa|mfa|two[\s-]?factor)\b", "disable 2FA"),
+    (r"\b(launder|laundering|money\s+laundering)\b", "money laundering"),
+    (r"\b(hack|steal|fraud)\b", "hack/fraud"),
+]
 
-        result = CVV_NEAR_RE.sub(_mask_cvv, result)
-
-    return result, findings
+COMPLIANCE_PATTERNS = [(re.compile(p, re.I), label) for p, label in _COMPLIANCE_RAW]
 
 
 def check_financial_compliance(text: str) -> Tuple[bool, float, str]:
-    """Chặn yêu cầu tài chính nguy hiểm (chuyển khoản, bypass, gian lận).
+    """Kiểm tra yêu cầu tài chính trái phép. Trả (violated, score, reason)."""
+    if not text:
+        return False, 0.0, ""
 
-    Trả về (vi_phạm, điểm_rủi_ro, lý_do). True nghĩa là vi phạm.
-    """
     normalized = normalize_text(text)
-    for pattern, reason in COMPLIANCE_RULES:
-        if pattern.search(normalized):
-            return True, 0.95, reason
+
+    for pattern, label in COMPLIANCE_PATTERNS:
+        m = pattern.search(normalized)
+        if m:
+            return True, 1.0, f"compliance violation: {label} ({m.group(0)[:40]})"
+
     return False, 0.0, ""
 
 
-def check_output(text: str) -> GuardrailResult:
-    """Kiểm tra đầu ra: lộ prompt, lời khuyên rủi ro, PII còn sót."""
-    if not text:
-        return GuardrailResult(
-            allowed=True,
-            layer="output",
-            reason="Đầu ra trống.",
-            risk_score=0.0,
-            processed_text="",
-            findings=[],
-        )
+# ============================================================
+# LỚP 5 — OUTPUT VALIDATOR
+# ============================================================
 
-    findings: List[str] = []
-    risk = 0.0
-    allowed = True
-    reasons: List[str] = []
-    processed = text
+_OUTPUT_LEAK_RAW = [
+    r"system\s+prompt",
+    r"my\s+instructions?\s+are",
+    r"i\s+was\s+told\s+to",
+]
 
-    if SYSTEM_LEAK_RE.search(text):
-        allowed = False
-        risk = max(risk, 0.9)
-        findings.append("system_prompt_leak")
-        reasons.append("Phát hiện nguy cơ lộ system prompt.")
-        processed = (
-            "Nội dung đã bị chặn vì có dấu hiệu tiết lộ hướng dẫn nội bộ."
-        )
+_OUTPUT_RISKY_RAW = [
+    r"\b(buy|sell|short|long)\s+(now|today|immediately)\b",
+    r"\bguaranteed\s+(return|profit|gain)\b",
+    r"\b100%\s+(safe|guaranteed|profit)\b",
+]
 
-    if RISKY_ADVICE_RE.search(text):
-        allowed = False
-        risk = max(risk, 0.85)
-        findings.append("risky_investment_advice")
-        reasons.append("Phát hiện lời khuyên đầu tư rủi ro.")
-        processed = (
-            "Nội dung đã bị chặn vì chứa lời khuyên đầu tư không phù hợp "
-            "(ví dụ bảo đảm lợi nhuận hoặc kêu gọi mua ngay)."
-        )
+OUTPUT_LEAK_PATTERNS = [re.compile(p, re.I) for p in _OUTPUT_LEAK_RAW]
+OUTPUT_RISKY_PATTERNS = [re.compile(p, re.I) for p in _OUTPUT_RISKY_RAW]
 
-    masked, pii_findings = mask_pii(processed if allowed else text)
-    leftover = pii_findings
-    if leftover:
-        findings.extend(f"output_pii:{item}" for item in leftover)
-        risk = max(risk, 0.5)
-        reasons.append("Phát hiện PII còn sót trên đầu ra và đã che.")
-        processed = masked
 
-    if allowed and leftover:
-        # PII được che nhưng vẫn cho phép hiển thị bản đã mask.
-        allowed = True
+# ============================================================
+# DATA CLASS
+# ============================================================
 
-    reason = " ".join(reasons) if reasons else "Đầu ra đạt kiểm tra."
-    return GuardrailResult(
-        allowed=allowed,
-        layer="output",
-        reason=reason,
-        risk_score=risk,
-        processed_text=processed,
-        findings=findings,
-    )
+@dataclass
+class GuardrailResult:
+    allowed: bool
+    layer: str = ""
+    reason: str = ""
+    risk_score: float = 0.0
+    processed_text: str = ""
+    findings: List[str] = field(default_factory=list)
 
+
+# ============================================================
+# PIPELINE
+# ============================================================
 
 def process_input(text: str) -> GuardrailResult:
-    """Pipeline: normalize → injection → compliance → mask PII."""
+    """Pipeline input: normalize → injection → compliance → PII."""
+    if not text or not text.strip():
+        return GuardrailResult(allowed=False, layer="input", reason="empty input")
+
     normalized = normalize_text(text)
 
-    injected, inj_score, inj_reason = detect_prompt_injection(normalized)
-    if injected:
+    is_inj, score, reason = detect_prompt_injection(normalized)
+    if is_inj:
         return GuardrailResult(
             allowed=False,
             layer="injection",
-            reason=inj_reason,
-            risk_score=inj_score,
+            reason=reason,
+            risk_score=score,
             processed_text=normalized,
             findings=["prompt_injection"],
         )
 
-    violated, comp_score, comp_reason = check_financial_compliance(normalized)
-    if violated:
+    is_comp, comp_score, comp_reason = check_financial_compliance(normalized)
+    if is_comp:
         return GuardrailResult(
             allowed=False,
             layer="compliance",
@@ -312,8 +260,8 @@ def process_input(text: str) -> GuardrailResult:
         return GuardrailResult(
             allowed=True,
             layer="pii",
-            reason="Đã che thông tin cá nhân nhạy cảm.",
-            risk_score=max(0.4, inj_score),
+            reason="",
+            risk_score=0.0,
             processed_text=masked,
             findings=pii_findings,
         )
@@ -321,13 +269,52 @@ def process_input(text: str) -> GuardrailResult:
     return GuardrailResult(
         allowed=True,
         layer="pass",
-        reason="Đầu vào hợp lệ.",
-        risk_score=inj_score,
-        processed_text=masked,
+        reason="",
+        risk_score=0.0,
+        processed_text=normalized,
+        findings=[],
+    )
+
+
+def check_output(text: str) -> GuardrailResult:
+    """Kiểm tra output LLM trước khi hiển thị."""
+    if not text:
+        return GuardrailResult(allowed=True, layer="output", processed_text="")
+
+    findings: List[str] = []
+
+    for p in OUTPUT_LEAK_PATTERNS:
+        if p.search(text):
+            findings.append("system_prompt_leak")
+            break
+
+    for p in OUTPUT_RISKY_PATTERNS:
+        if p.search(text):
+            findings.append("risky_investment_advice")
+            break
+
+    _, pii = mask_pii(text)
+    if pii:
+        findings.append("pii_leak")
+
+    if findings:
+        return GuardrailResult(
+            allowed=False,
+            layer="output",
+            reason=", ".join(findings),
+            risk_score=0.8,
+            processed_text=text,
+            findings=findings,
+        )
+
+    return GuardrailResult(
+        allowed=True,
+        layer="output",
+        processed_text=text,
         findings=[],
     )
 
 
 def process_output(text: str) -> GuardrailResult:
-    """Wrapper kiểm tra đầu ra mô hình."""
+    """Wrapper cho check_output."""
     return check_output(text)
