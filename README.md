@@ -31,23 +31,46 @@ Trong khi các mô hình ngôn ngữ lớn (LLM) mang lại tiện ích chưa t�
 ---
 
 ## 🏗️ Kiến trúc
-┌─────────────────────────────────────────────────────┐
-│ USER INPUT │
-│ ↓ │
-│ [0] Normalize Unicode (NFKC + zero-width removal) │
-│ ↓ │
-│ [1] Injection Detector (hard + soft + heuristic) │
-│ ↓ │
-│ [2] PII Masker (Luhn + context-aware) │
-│ ↓ │
-│ [3] Compliance Check (wire transfer, bypass auth) │
-│ ↓ │
-│ [4] LLM Call (Llama 3.3 70B on Groq) │
-│ ↓ │
-│ [5] Output Validator (leak + risky advice) │
-│ ↓ │
-│ [6] Audit Log (JSONL) + Streamlit UI │
-└─────────────────────────────────────────────────────┘
+## 🏗️ Kiến trúc
+
+**Luồng xử lý:**
+
+```
+USER INPUT
+    |
+    v
+[0] Normalize Unicode (NFKC + xoa zero-width)
+    |
+    v
+[1] Injection Detector (hard + soft + heuristic)
+    |
+    v
+[2] PII Masker (Luhn + context-aware)
+    |
+    v
+[3] Compliance Check (wire transfer, bypass auth)
+    |
+    v
+[4] LLM Call (Llama 3.3 70B tren Groq)
+    |
+    v
+[5] Output Validator (leak + risky advice)
+    |
+    v
+[6] Audit Log (JSONL) + Streamlit UI
+```
+
+**Giải thích từng lớp:**
+
+| Lớp | Chức năng | Ví dụ |
+|-----|-----------|-------|
+| 0. Normalize | Chuẩn hóa Unicode, xóa ký tự ẩn | `ig\u200bnore` → `ignore` |
+| 1. Injection | Phát hiện jailbreak | "Ignore previous instructions" → chặn |
+| 2. PII Mask | Che dữ liệu nhạy cảm | `4242...` → `[REDACTED_CREDIT_CARD]` |
+| 3. Compliance | Chặn yêu cầu gian lận | "Authorize wire transfer" → chặn |
+| 4. LLM | Sinh câu trả lời | Llama 3.3 70B trên Groq |
+| 5. Output | Kiểm tra phản hồi | Phát hiện leak system prompt |
+| 6. Audit | Ghi log JSONL | `logs/audit.jsonl` |
 
 text
 
