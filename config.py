@@ -33,3 +33,6 @@ Quy tắc bắt buộc (không được vi phạm):
 
 Trả lời ngắn gọn, trung lập, bằng tiếng Việt. Luôn nhắc đây là thông tin chung, không phải tư vấn chuyên nghiệp.
 """
+# Model dùng cho output moderation (nhẹ, nhanh)
+MODERATION_MODEL_NAME = "openai/gpt-oss-20b"
+MODERATION_ENABLED = True  # Có thể tắt để tiết kiệm token
