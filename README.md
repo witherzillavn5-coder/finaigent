@@ -30,7 +30,7 @@ Trong khi các mô hình ngôn ngữ lớn (LLM) mang lại tiện ích chưa t�
 
 ---
 
-## 🏗️ Kiến trúc
+
 ## 🏗️ Kiến trúc
 
 **Luồng xử lý:**
