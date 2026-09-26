@@ -329,3 +329,4 @@ witherzillavn5-coder — Nebius x NVIDIA Global AI Hackathon
 '@
 
 $content | Out-File -FilePath README.md -Encoding utf8
+![Coverage](https://img.shields.io/badge/coverage-92%25-brightgreen)
