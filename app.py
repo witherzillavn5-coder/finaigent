@@ -24,6 +24,9 @@ FALLBACK_REPLY: str = (
     "Đây không phải tư vấn tài chính chuyên nghiệp."
 )
 
+# Số tin nhắn gần nhất truyền vào LLM (3 cặp user-assistant)
+HISTORY_LIMIT: int = 6
+
 
 def _init_state() -> None:
     """Khởi tạo session_state."""
@@ -69,18 +72,27 @@ def _get_client() -> OpenAI | None:
 
 
 def _call_llm(client: OpenAI, user_text: str) -> str:
-    """Gọi LLM với tối đa MAX_RETRIES lần thử lại."""
+    """Gọi LLM với tối đa MAX_RETRIES lần thử lại.
+
+    Multi-turn: chỉ truyền HISTORY_LIMIT tin nhắn gần nhất để tránh
+    vượt context window và tiết kiệm token.
+    """
     attempts = config.MAX_RETRIES + 1
     last_error: Exception | None = None
+
     for _ in range(attempts):
         try:
+            # Lấy 6 tin nhắn gần nhất (3 cặp user-assistant)
+            recent_messages = st.session_state.messages[-HISTORY_LIMIT:]
             history = [
                 msg
-                for msg in st.session_state.messages
+                for msg in recent_messages
                 if msg.get("role") in {"user", "assistant"}
             ]
+            # Bỏ tin user cuối vì sẽ thêm lại bên dưới
             if history and history[-1].get("role") == "user":
                 history = history[:-1]
+
             response = client.chat.completions.create(
                 model=config.MODEL_NAME,
                 temperature=config.TEMPERATURE,
@@ -96,6 +108,7 @@ def _call_llm(client: OpenAI, user_text: str) -> str:
         except Exception as exc:  # noqa: BLE001 — fallback khi API lỗi
             last_error = exc
             time.sleep(0.4)
+
     _ = last_error
     return FALLBACK_REPLY
 
