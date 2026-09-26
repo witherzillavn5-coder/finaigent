@@ -40,6 +40,9 @@ def _init_state() -> None:
         st.session_state.stats_history = []
     if "blocked_attacks" not in st.session_state:
         st.session_state.blocked_attacks = 0
+    # Cờ báo cần rerun sau khi mask PII
+    if "_should_rerun" not in st.session_state:
+        st.session_state._should_rerun = False
 
 
 def _rate_limit_ok() -> bool:
@@ -99,9 +102,7 @@ def _call_llm(client: OpenAI, user_text: str) -> str:
 
 def _record_stats() -> None:
     """Ghi mốc blocked/PII theo thời gian cho biểu đồ sidebar."""
-    # Đồng bộ alias blocked_attacks với metric attacks_blocked
     st.session_state.blocked_attacks = int(st.session_state.attacks_blocked)
-    # Thêm một điểm thời gian khi có sự kiện bảo mật
     st.session_state.stats_history.append({
         "time": datetime.now().strftime("%H:%M:%S"),
         "blocked": st.session_state.blocked_attacks,
@@ -122,7 +123,6 @@ def main() -> None:
         st.metric("Attacks Blocked", st.session_state.attacks_blocked)
         st.metric("PII Redacted", st.session_state.pii_redacted)
 
-        # Biểu đồ sau metrics
         st.divider()
 
         # Số cuộc tấn công bị chặn theo thời gian
@@ -147,7 +147,6 @@ def main() -> None:
         if audit_path.exists() and audit_path.stat().st_size > 0:
             with open(audit_path, "r", encoding="utf-8") as f:
                 audit_content = f.read()
-
             st.download_button(
                 label="📥 Tải Audit Log",
                 data=audit_content,
@@ -164,6 +163,7 @@ def main() -> None:
             st.session_state.request_times = []
             st.rerun()
 
+    # Hiển thị lịch sử chat
     for message in st.session_state.messages:
         with st.chat_message(message["role"]):
             st.markdown(message["content"])
@@ -189,6 +189,9 @@ def main() -> None:
     started = time.perf_counter()
     result = guardrail.process_input(prompt)
 
+    # ============================================================
+    # LỚP 1+3 — Input bị chặn (injection hoặc compliance)
+    # ============================================================
     if not result.allowed:
         st.session_state.attacks_blocked += 1
         st.session_state.blocked_attacks += 1
@@ -199,14 +202,22 @@ def main() -> None:
             risk_score=result.risk_score,
             extra={"pii_count": 0},
         )
-        # Ghi sự kiện blocked cho biểu đồ
         _record_stats()
-        error_text = f"⛔ Yêu cầu bị chặn ({result.layer}): {result.reason}"
+        _LABELS = {
+            "injection": "Phát hiện dấu hiệu tấn công.",
+            "compliance": "Yêu cầu không được phép.",
+            "output": "Phản hồi không an toàn.",
+        }
+        label = _LABELS.get(result.layer, "Yêu cầu bị chặn.")
+        error_text = f"⛔ {label}\n\nVui lòng nhập lại câu hỏi tài chính bình thường."
         with st.chat_message("assistant"):
             st.error(error_text)
         st.session_state.messages.append({"role": "assistant", "content": error_text})
-        return
+        st.rerun()
 
+    # ============================================================
+    # LỚP 2 — PII masking
+    # ============================================================
     if result.findings:
         st.session_state.pii_redacted += len(result.findings)
         audit.log_event(
@@ -216,20 +227,25 @@ def main() -> None:
             risk_score=result.risk_score,
             extra={"pii_count": len(result.findings)},
         )
-        # Ghi sự kiện PII redacted cho biểu đồ
         _record_stats()
         st.warning("Đã phát hiện và che thông tin nhạy cảm trước khi gửi tới mô hình.")
+        # Đánh dấu để rerun sau khi hiển thị xong
+        st.session_state._should_rerun = True
 
+    # ============================================================
+    # LỚP 4 — Gọi LLM
+    # ============================================================
     client = _get_client()
     if client is None:
-        raw_reply = (
-            "Thiếu NEBIUS_API_KEY trong môi trường. Không thể gọi mô hình."
-        )
+        raw_reply = "Thiếu NEBIUS_API_KEY trong môi trường. Không thể gọi mô hình."
         model_name = "none"
     else:
         raw_reply = _call_llm(client, result.processed_text)
         model_name = config.MODEL_NAME
 
+    # ============================================================
+    # LỚP 5 — Kiểm tra output LLM
+    # ============================================================
     output = guardrail.process_output(raw_reply)
     latency_ms = int((time.perf_counter() - started) * 1000)
     audit.log_event(
@@ -244,16 +260,19 @@ def main() -> None:
     if not output.allowed:
         st.session_state.attacks_blocked += 1
         st.session_state.blocked_attacks += 1
-        # Ghi sự kiện output bị chặn cho biểu đồ
         _record_stats()
         with st.chat_message("assistant"):
             st.error(display)
         st.session_state.messages.append({"role": "assistant", "content": display})
-        return
+        st.rerun()
 
     with st.chat_message("assistant"):
         st.markdown(display)
     st.session_state.messages.append({"role": "assistant", "content": display})
+
+    # Nếu có PII vừa được mask, rerun để sidebar cập nhật ngay
+    if st.session_state.pop("_should_rerun", False):
+        st.rerun()
 
 
 if __name__ == "__main__":
