@@ -444,3 +444,82 @@ def test_adv_compliance_launder() -> None:
     assert result.layer == "compliance"
     assert "financial_compliance" in result.findings
 
+
+# ---------------------------------------------------------------------------
+# NHÓM 5 — Coverage boost: edge cases & fallback
+# ---------------------------------------------------------------------------
+
+def test_normalize_empty_string() -> None:
+    """Chuỗi rỗng trả về rỗng."""
+    assert normalize_text("") == ""
+
+
+def test_normalize_only_whitespace() -> None:
+    """Chuỗi chỉ khoảng trắng."""
+    assert normalize_text("   \t\n  ") == ""
+
+
+def test_mask_pii_empty_string() -> None:
+    """mask_pii với chuỗi rỗng."""
+    masked, findings = mask_pii("")
+    assert masked == ""
+    assert findings == []
+
+
+def test_compliance_empty_string() -> None:
+    """Compliance với chuỗi rỗng."""
+    violated, score, reason = check_financial_compliance("")
+    assert violated is False
+    assert score == 0.0
+
+
+def test_injection_empty_string() -> None:
+    """Injection với chuỗi rỗng."""
+    detected, score, reason = detect_prompt_injection("")
+    assert detected is False
+    assert score == 0.0
+
+
+def test_process_input_empty_string() -> None:
+    """process_input với chuỗi rỗng."""
+    result = process_input("")
+    assert result.allowed is False
+    assert result.layer == "input"
+
+
+def test_luhn_short_number() -> None:
+    """Số <13 chữ số không qua Luhn."""
+    assert luhn_check("123456") is False
+
+
+def test_luhn_long_number() -> None:
+    """Số >19 chữ số không qua Luhn."""
+    assert luhn_check("1" * 25) is False
+
+
+def test_mask_pii_fallback_regex(monkeypatch) -> None:
+    """Fallback regex khi Presidio không khả dụng."""
+    import guardrail as g
+    monkeypatch.setattr(g, "_PRESIDIO_AVAILABLE", False)
+    masked, findings = g.mask_pii("SSN 123-45-6789")
+    assert "[SSN_REDACTED]" in masked
+    assert "ssn" in findings
+
+
+def test_check_output_empty_string() -> None:
+    """check_output với chuỗi rỗng."""
+    result = check_output("")
+    assert result.allowed is True
+
+
+def test_process_output_wrapper() -> None:
+    """process_output là wrapper của check_output."""
+    result = process_output("Lãi suất là chi phí vay vốn.")
+    assert result.allowed is True
+
+
+def test_mask_pii_vn_phone_with_84() -> None:
+    """SĐT VN đầu +84."""
+    masked, findings = mask_pii("Liên hệ +84912345678")
+    assert "[PHONE_REDACTED]" in masked
+    assert "vn_phone" in findings
