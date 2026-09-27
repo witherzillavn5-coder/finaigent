@@ -16,13 +16,12 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import guardrail
 
-
 # ============================================================
 # CẤU HÌNH CHUNG
 # ============================================================
 FUZZ_SETTINGS = settings(
-    max_examples=500,           # 500 inputs ngẫu nhiên mỗi test
-    deadline=None,              # Presidio có thể chậm, bỏ deadline
+    max_examples=500,  # 500 inputs ngẫu nhiên mỗi test
+    deadline=None,  # Presidio có thể chậm, bỏ deadline
     suppress_health_check=[HealthCheck.too_slow, HealthCheck.filter_too_much],
 )
 
@@ -176,6 +175,7 @@ def test_fuzz_zero_width_injection(text: str) -> None:
 def test_fuzz_fullwidth_text(text: str) -> None:
     """Fullwidth characters không crash."""
     import unicodedata
+
     payload = unicodedata.normalize("NFKC", text)
     result = guardrail.process_input(payload)
     assert isinstance(result.allowed, bool)
@@ -203,4 +203,3 @@ def test_fuzz_list_of_inputs(texts: list) -> None:
     for t in texts:
         result = guardrail.process_input(t)
         assert isinstance(result.allowed, bool)
-        

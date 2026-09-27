@@ -9,10 +9,10 @@ from __future__ import annotations
 import hashlib
 import json
 import os
-from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
+from datetime import UTC, datetime
+from typing import Any
 
-from config import LOG_DIR, LOG_FILE
+from config import LOG_DIR
 
 CHAIN_FILE = "audit_chain.jsonl"
 GENESIS_HASH = "0" * 64  # hash của entry đầu tiên
@@ -22,7 +22,7 @@ def _ensure_dir() -> None:
     os.makedirs(LOG_DIR, exist_ok=True)
 
 
-def _compute_hash(entry_data: Dict[str, Any], prev_hash: str) -> str:
+def _compute_hash(entry_data: dict[str, Any], prev_hash: str) -> str:
     """Tính SHA256 của entry + prev_hash."""
     payload = json.dumps(entry_data, sort_keys=True, ensure_ascii=False) + prev_hash
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
@@ -35,7 +35,7 @@ def _get_last_hash() -> str:
         return GENESIS_HASH
 
     last_hash = GENESIS_HASH
-    with open(path, "r", encoding="utf-8") as f:
+    with open(path, encoding="utf-8") as f:
         for line in f:
             line = line.strip()
             if not line:
@@ -53,8 +53,8 @@ def log_event(
     layer: str,
     reason: str = "",
     risk_score: float = 0.0,
-    extra: Optional[Dict[str, Any]] = None,
-) -> Dict[str, Any]:
+    extra: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     """Ghi 1 entry vào hash chain.
 
     Trả về entry đã ghi (bao gồm hash).
@@ -65,7 +65,7 @@ def log_event(
     extras = {k: v for k, v in (extra or {}).items() if k in safe_keys}
 
     data = {
-        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "timestamp": datetime.now(UTC).isoformat(),
         "event_type": event_type,
         "layer": layer,
         "reason": reason[:200],
@@ -97,7 +97,7 @@ def verify_chain() -> tuple[bool, int, str]:
     prev_hash = GENESIS_HASH
     total = 0
 
-    with open(path, "r", encoding="utf-8") as f:
+    with open(path, encoding="utf-8") as f:
         for line_no, line in enumerate(f, start=1):
             line = line.strip()
             if not line:

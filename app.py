@@ -7,7 +7,6 @@ import os
 import time
 from datetime import datetime
 from pathlib import Path
-from typing import List
 
 import pandas as pd
 import streamlit as st
@@ -52,9 +51,7 @@ def _rate_limit_ok() -> bool:
     """Giới hạn 10 tin nhắn mỗi phút theo phiên."""
     now = time.time()
     window = config.RATE_LIMIT_WINDOW_SEC
-    times: List[float] = [
-        t for t in st.session_state.request_times if now - t < window
-    ]
+    times: list[float] = [t for t in st.session_state.request_times if now - t < window]
     st.session_state.request_times = times
     return len(times) < config.RATE_LIMIT_MAX_REQUESTS
 
@@ -79,11 +76,7 @@ def _call_llm(client: OpenAI, user_text: str) -> str:
     for _ in range(attempts):
         try:
             recent_messages = st.session_state.messages[-HISTORY_LIMIT:]
-            history = [
-                msg
-                for msg in recent_messages
-                if msg.get("role") in {"user", "assistant"}
-            ]
+            history = [msg for msg in recent_messages if msg.get("role") in {"user", "assistant"}]
             if history and history[-1].get("role") == "user":
                 history = history[:-1]
 
@@ -148,9 +141,9 @@ Respond ONLY with JSON:
 def _show_error_card(title: str, description: str, hint: str = "") -> None:
     """Hiển thị error card."""
     hint_html = (
-        f'<div style="margin-top: 8px; font-size: 0.85rem; opacity: 0.75;">'
-        f'{hint}</div>'
-        if hint else ""
+        f'<div style="margin-top: 8px; font-size: 0.85rem; opacity: 0.75;">' f"{hint}</div>"
+        if hint
+        else ""
     )
     st.markdown(
         f"""
@@ -198,11 +191,13 @@ def _show_warning_card(title: str, description: str) -> None:
 def _record_stats() -> None:
     """Ghi mốc blocked/PII theo thời gian."""
     st.session_state.blocked_attacks = int(st.session_state.attacks_blocked)
-    st.session_state.stats_history.append({
-        "time": datetime.now().strftime("%H:%M:%S"),
-        "blocked": st.session_state.blocked_attacks,
-        "pii": st.session_state.pii_redacted,
-    })
+    st.session_state.stats_history.append(
+        {
+            "time": datetime.now().strftime("%H:%M:%S"),
+            "blocked": st.session_state.blocked_attacks,
+            "pii": st.session_state.pii_redacted,
+        }
+    )
 
 
 CUSTOM_CSS = """
@@ -410,7 +405,7 @@ def main() -> None:
         # Download audit log
         audit_path = Path("logs/audit.jsonl")
         if audit_path.exists() and audit_path.stat().st_size > 0:
-            with open(audit_path, "r", encoding="utf-8") as f:
+            with open(audit_path, encoding="utf-8") as f:
                 audit_content = f.read()
             st.download_button(
                 label="Download Audit Log",

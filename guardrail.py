@@ -13,12 +13,12 @@ from __future__ import annotations
 import re
 import unicodedata
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional, Tuple
 
 # --- Presidio optional import ---
 try:
     from presidio_analyzer import AnalyzerEngine, Pattern, PatternRecognizer
     from presidio_analyzer.nlp_engine import NlpEngineProvider
+
     _PRESIDIO_AVAILABLE = True
 except ImportError:
     _PRESIDIO_AVAILABLE = False
@@ -71,7 +71,7 @@ HARD_INJECTION_PATTERNS = [re.compile(p, re.I) for p in _HARD_PATTERNS_RAW]
 SOFT_INJECTION_PATTERNS = [re.compile(p, re.I) for p in _SOFT_PATTERNS_RAW]
 
 
-def detect_prompt_injection(text: str) -> Tuple[bool, float, str]:
+def detect_prompt_injection(text: str) -> tuple[bool, float, str]:
     """Phát hiện prompt injection. Trả (is_injection, score, reason)."""
     if not text:
         return False, 0.0, ""
@@ -96,7 +96,7 @@ def detect_prompt_injection(text: str) -> Tuple[bool, float, str]:
 # ============================================================
 
 # Map entity type → (tag, keyword)
-ENTITY_MAP: Dict[str, Tuple[str, str]] = {
+ENTITY_MAP: dict[str, tuple[str, str]] = {
     "CREDIT_CARD": ("[CARD_REDACTED]", "credit_card"),
     "US_SSN": ("[SSN_REDACTED]", "ssn"),
     "EMAIL_ADDRESS": ("[EMAIL_REDACTED]", "email"),
@@ -109,9 +109,7 @@ OTP_PATTERN = re.compile(
     r"(?i)(?:mã\s+otp|mã\s+xác\s+thực|otp|one[\s-]?time(?:\s+pass(?:word|code)?)?)"
     r"\s*(?:là|is|[:#-])?\s*\d{4,8}"
 )
-CVV_PATTERN = re.compile(
-    r"(?i)\b(?:cvv|cvc|security\s*code)\s*[:=#-]?\s*\d{3,4}\b"
-)
+CVV_PATTERN = re.compile(r"(?i)\b(?:cvv|cvc|security\s*code)\s*[:=#-]?\s*\d{3,4}\b")
 CARD_FALLBACK = re.compile(r"\b(?:\d[ -]?){12,18}\d\b")
 SSN_FALLBACK = re.compile(r"\b\d{3}-\d{2}-\d{4}\b")
 VN_PHONE_PATTERN = re.compile(r"(?<!\d)(?:\+?84|0)(?:3|5|7|8|9)\d{8}(?!\d)")
@@ -134,7 +132,7 @@ def luhn_check(number: str) -> bool:
 
 
 # --- Singleton AnalyzerEngine ---
-_analyzer: Optional["AnalyzerEngine"] = None
+_analyzer: AnalyzerEngine | None = None
 _analyzer_failed: bool = False
 
 
@@ -168,7 +166,7 @@ def _get_analyzer():
         return None
 
 
-def _mask_with_presidio(text: str) -> Tuple[str, List[str]]:
+def _mask_with_presidio(text: str) -> tuple[str, list[str]]:
     """Presidio detect + mask. Chỉ mask entity nằm trong ENTITY_MAP."""
     analyzer = _get_analyzer()
     if analyzer is None:
@@ -178,7 +176,10 @@ def _mask_with_presidio(text: str) -> Tuple[str, List[str]]:
 
     try:
         results = analyzer.analyze(
-            text=text, entities=entities, language="en", score_threshold=0.6,
+            text=text,
+            entities=entities,
+            language="en",
+            score_threshold=0.6,
         )
     except Exception:
         return text, []
@@ -186,34 +187,35 @@ def _mask_with_presidio(text: str) -> Tuple[str, List[str]]:
     if not results:
         return text, []
 
-    findings: List[str] = []
+    findings: list[str] = []
     results = sorted(results, key=lambda r: r.start, reverse=True)
 
     masked = text
     for r in results:
         if r.entity_type not in ENTITY_MAP:
             continue
-        matched = masked[r.start:r.end]
+        matched = masked[r.start : r.end]
 
         # Credit card: chỉ mask nếu qua Luhn
         if r.entity_type == "CREDIT_CARD" and not luhn_check(matched):
             continue
 
         tag, keyword = ENTITY_MAP[r.entity_type]
-        masked = masked[:r.start] + tag + masked[r.end:]
+        masked = masked[: r.start] + tag + masked[r.end :]
         findings.append(keyword)
 
     return masked, findings
 
 
-def _mask_with_regex(text: str) -> Tuple[str, List[str]]:
+def _mask_with_regex(text: str) -> tuple[str, list[str]]:
     """Fallback khi Presidio không khả dụng."""
-    findings: List[str] = []
+    findings: list[str] = []
     masked = text
 
     def ssn_repl(m):
         findings.append("ssn")
         return "[SSN_REDACTED]"
+
     masked = SSN_FALLBACK.sub(ssn_repl, masked)
 
     def card_repl(m):
@@ -221,12 +223,13 @@ def _mask_with_regex(text: str) -> Tuple[str, List[str]]:
             findings.append("credit_card")
             return "[CARD_REDACTED]"
         return m.group(0)
+
     masked = CARD_FALLBACK.sub(card_repl, masked)
 
     return masked, findings
 
 
-def mask_pii(text: str) -> Tuple[str, List[str]]:
+def mask_pii(text: str) -> tuple[str, list[str]]:
     """Mask PII: Presidio + regex fallback (SSN, OTP, CVV, VN phone)."""
     if not text:
         return "", []
@@ -238,27 +241,32 @@ def mask_pii(text: str) -> Tuple[str, List[str]]:
 
     # Fallback regex cho SSN — Presidio cần context nên không bắt khi đứng riêng
     if "[SSN_REDACTED]" not in masked:
+
         def ssn_repl(m):
             findings.append("ssn")
             return "[SSN_REDACTED]"
+
         masked = SSN_FALLBACK.sub(ssn_repl, masked)
 
     # OTP — Presidio không có recognizer cho cái này
     def otp_repl(m):
         findings.append("otp")
         return "[OTP_REDACTED]"
+
     masked = OTP_PATTERN.sub(otp_repl, masked)
 
     # CVV — phải có context "cvv/cvc/security code"
     def cvv_repl(m):
         findings.append("cvv")
         return "[CVV_REDACTED]"
+
     masked = CVV_PATTERN.sub(cvv_repl, masked)
 
     # Số điện thoại VN
     def vn_phone_repl(m):
         findings.append("vn_phone")
         return "[PHONE_REDACTED]"
+
     masked = VN_PHONE_PATTERN.sub(vn_phone_repl, masked)
 
     return masked, findings
@@ -269,10 +277,16 @@ def mask_pii(text: str) -> Tuple[str, List[str]]:
 # ============================================================
 
 _COMPLIANCE_RAW = [
-    (r"\b(authorize|execute|perform|make|do)\s+(this|the|a)\s+(wire\s+)?transfer\b", "wire transfer"),
+    (
+        r"\b(authorize|execute|perform|make|do)\s+(this|the|a)\s+(wire\s+)?transfer\b",
+        "wire transfer",
+    ),
     (r"\bwire\s+transfer\b", "wire transfer"),
     (r"\bbypass\s+(my|the|your)?\s*(bank\s+)?(authentication|auth|login|2fa|mfa)\b", "bypass auth"),
-    (r"\b(modify|change|increase|inflate|edit)\s+(my|the|an?)?\s*(account\s+)?balance\b", "modify balance"),
+    (
+        r"\b(modify|change|increase|inflate|edit)\s+(my|the|an?)?\s*(account\s+)?balance\b",
+        "modify balance",
+    ),
     (r"\bdisable\s+(2fa|mfa|two[\s-]?factor)\b", "disable 2FA"),
     (r"\b(launder|laundering|money\s+laundering)\b", "money laundering"),
     (r"\b(hack|steal|fraud)\b", "hack/fraud"),
@@ -281,7 +295,7 @@ _COMPLIANCE_RAW = [
 COMPLIANCE_PATTERNS = [(re.compile(p, re.I), label) for p, label in _COMPLIANCE_RAW]
 
 
-def check_financial_compliance(text: str) -> Tuple[bool, float, str]:
+def check_financial_compliance(text: str) -> tuple[bool, float, str]:
     """Kiểm tra yêu cầu tài chính trái phép."""
     if not text:
         return False, 0.0, ""
@@ -318,6 +332,7 @@ OUTPUT_RISKY_PATTERNS = [re.compile(p, re.I) for p in _OUTPUT_RISKY_RAW]
 # DATA CLASS
 # ============================================================
 
+
 @dataclass
 class GuardrailResult:
     allowed: bool
@@ -325,12 +340,13 @@ class GuardrailResult:
     reason: str = ""
     risk_score: float = 0.0
     processed_text: str = ""
-    findings: List[str] = field(default_factory=list)
+    findings: list[str] = field(default_factory=list)
 
 
 # ============================================================
 # PIPELINE
 # ============================================================
+
 
 def process_input(text: str) -> GuardrailResult:
     """normalize → injection → compliance → PII."""
@@ -342,28 +358,39 @@ def process_input(text: str) -> GuardrailResult:
     is_inj, score, reason = detect_prompt_injection(normalized)
     if is_inj:
         return GuardrailResult(
-            allowed=False, layer="injection", reason=reason,
-            risk_score=score, processed_text=normalized,
+            allowed=False,
+            layer="injection",
+            reason=reason,
+            risk_score=score,
+            processed_text=normalized,
             findings=["prompt_injection"],
         )
 
     is_comp, comp_score, comp_reason = check_financial_compliance(normalized)
     if is_comp:
         return GuardrailResult(
-            allowed=False, layer="compliance", reason=comp_reason,
-            risk_score=comp_score, processed_text=normalized,
+            allowed=False,
+            layer="compliance",
+            reason=comp_reason,
+            risk_score=comp_score,
+            processed_text=normalized,
             findings=["financial_compliance"],
         )
 
     masked, pii_findings = mask_pii(normalized)
     if pii_findings:
         return GuardrailResult(
-            allowed=True, layer="pii", processed_text=masked,
+            allowed=True,
+            layer="pii",
+            processed_text=masked,
             findings=pii_findings,
         )
 
     return GuardrailResult(
-        allowed=True, layer="pass", processed_text=normalized, findings=[],
+        allowed=True,
+        layer="pass",
+        processed_text=normalized,
+        findings=[],
     )
 
 
@@ -372,7 +399,7 @@ def check_output(text: str) -> GuardrailResult:
     if not text:
         return GuardrailResult(allowed=True, layer="output", processed_text="")
 
-    findings: List[str] = []
+    findings: list[str] = []
 
     for p in OUTPUT_LEAK_PATTERNS:
         if p.search(text):
@@ -390,8 +417,12 @@ def check_output(text: str) -> GuardrailResult:
 
     if findings:
         return GuardrailResult(
-            allowed=False, layer="output", reason=", ".join(findings),
-            risk_score=0.8, processed_text=text, findings=findings,
+            allowed=False,
+            layer="output",
+            reason=", ".join(findings),
+            risk_score=0.8,
+            processed_text=text,
+            findings=findings,
         )
 
     return GuardrailResult(allowed=True, layer="output", processed_text=text, findings=[])

@@ -42,7 +42,7 @@ def test_chain_detects_tamper():
 
     # Sửa entry đầu tiên
     path = os.path.join(LOG_DIR, "audit_chain.jsonl")
-    with open(path, "r", encoding="utf-8") as f:
+    with open(path, encoding="utf-8") as f:
         lines = f.readlines()
 
     entry = json.loads(lines[0])
