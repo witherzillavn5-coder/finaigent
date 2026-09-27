@@ -16,6 +16,7 @@ from openai import OpenAI
 import audit
 import config
 import guardrail
+import rate_limit
 
 load_dotenv()
 
@@ -35,8 +36,6 @@ def _init_state() -> None:
         st.session_state.attacks_blocked = 0
     if "pii_redacted" not in st.session_state:
         st.session_state.pii_redacted = 0
-    if "request_times" not in st.session_state:
-        st.session_state.request_times = []
     if "stats_history" not in st.session_state:
         st.session_state.stats_history = []
     if "blocked_attacks" not in st.session_state:
@@ -45,15 +44,6 @@ def _init_state() -> None:
         st.session_state._should_rerun = False
     if "moderation_on" not in st.session_state:
         st.session_state.moderation_on = True
-
-
-def _rate_limit_ok() -> bool:
-    """Giới hạn 10 tin nhắn mỗi phút theo phiên."""
-    now = time.time()
-    window = config.RATE_LIMIT_WINDOW_SEC
-    times: list[float] = [t for t in st.session_state.request_times if now - t < window]
-    st.session_state.request_times = times
-    return len(times) < config.RATE_LIMIT_MAX_REQUESTS
 
 
 def _get_client() -> OpenAI | None:
@@ -377,6 +367,13 @@ def main() -> None:
         st.metric("Attacks Blocked", st.session_state.attacks_blocked)
         st.metric("PII Redacted", st.session_state.pii_redacted)
 
+        # Rate limiter backend status
+        backend_info = rate_limit.get_redis_status()
+        if backend_info["backend"] == "redis":
+            st.caption(f"Rate limiter: Redis ({backend_info['host']})")
+        else:
+            st.caption("Rate limiter: in-memory (Redis offline)")
+
         st.divider()
 
         st.subheader("Attacks over time")
@@ -403,14 +400,14 @@ def main() -> None:
         st.divider()
 
         # Download audit log
-        audit_path = Path("logs/audit.jsonl")
+        audit_path = Path("logs/audit_chain.jsonl")
         if audit_path.exists() and audit_path.stat().st_size > 0:
             with open(audit_path, encoding="utf-8") as f:
                 audit_content = f.read()
             st.download_button(
                 label="Download Audit Log",
                 data=audit_content,
-                file_name="audit.jsonl",
+                file_name="audit_chain.jsonl",
                 mime="application/json",
                 use_container_width=True,
             )
@@ -430,7 +427,7 @@ def main() -> None:
 
         if st.button("Clear History", use_container_width=True):
             st.session_state.messages = []
-            st.session_state.request_times = []
+            rate_limit.reset_user("default_user")
             st.rerun()
 
     for message in st.session_state.messages:
@@ -449,14 +446,15 @@ def main() -> None:
         )
         return
 
-    if not _rate_limit_ok():
+    # Redis-based rate limit (fallback memory)
+    allowed, remaining = rate_limit.check_rate_limit("default_user")
+    if not allowed:
         _show_warning_card(
             "Rate limit reached",
-            f"Maximum {config.RATE_LIMIT_MAX_REQUESTS} messages per minute.",
+            f"Maximum {config.RATE_LIMIT_MAX_REQUESTS} messages per minute. "
+            f"Backend: {rate_limit.get_backend_name()}.",
         )
         return
-
-    st.session_state.request_times.append(time.time())
 
     with st.chat_message("user"):
         st.markdown(prompt)

@@ -36,3 +36,7 @@ exclude = [
     "^tests/",
     "^logs/",
 ]
+
+[[tool.mypy.overrides]]
+module = "redis.*"
+ignore_missing_imports = true
