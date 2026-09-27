@@ -28,4 +28,4 @@ jobs:
         run: python -m spacy download en_core_web_sm
 
       - name: Run tests
-        run: python -m pytest tests/ -v
+        run: python -m pytest tests/ -v --cov=guardrail --cov=audit --cov=config --cov-report=term
