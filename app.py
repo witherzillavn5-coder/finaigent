@@ -406,6 +406,8 @@ def main() -> None:
         )
 
         st.divider()
+
+        # Download audit log
         audit_path = Path("logs/audit.jsonl")
         if audit_path.exists() and audit_path.stat().st_size > 0:
             with open(audit_path, "r", encoding="utf-8") as f:
@@ -420,6 +422,16 @@ def main() -> None:
             st.caption(f"Log has {len(audit_content.splitlines())} lines")
         else:
             st.caption("No logs yet")
+
+        # Verify hash chain integrity
+        if st.button("Verify Log Integrity", use_container_width=True):
+            is_valid, total, msg = audit.verify_chain()
+            if is_valid:
+                st.success(f"Chain valid: {total} entries verified")
+            else:
+                st.error(f"Chain broken: {msg}")
+
+        st.divider()
 
         if st.button("Clear History", use_container_width=True):
             st.session_state.messages = []
