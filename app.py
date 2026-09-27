@@ -40,14 +40,11 @@ def _init_state() -> None:
     if "request_times" not in st.session_state:
         st.session_state.request_times = []
     if "stats_history" not in st.session_state:
-        # Lịch sử điểm dữ liệu cho 2 biểu đồ sidebar
         st.session_state.stats_history = []
     if "blocked_attacks" not in st.session_state:
         st.session_state.blocked_attacks = 0
-    # Cờ báo cần rerun sau khi mask PII
     if "_should_rerun" not in st.session_state:
         st.session_state._should_rerun = False
-    # Toggle deep moderation (LLM thứ 2 kiểm tra output)
     if "moderation_on" not in st.session_state:
         st.session_state.moderation_on = True
 
@@ -76,24 +73,18 @@ def _get_client() -> OpenAI | None:
 
 
 def _call_llm(client: OpenAI, user_text: str) -> str:
-    """Gọi LLM với tối đa MAX_RETRIES lần thử lại.
-
-    Multi-turn: chỉ truyền HISTORY_LIMIT tin nhắn gần nhất để tránh
-    vượt context window và tiết kiệm token.
-    """
+    """Gọi LLM với tối đa MAX_RETRIES lần thử lại."""
     attempts = config.MAX_RETRIES + 1
     last_error: Exception | None = None
 
     for _ in range(attempts):
         try:
-            # Lấy 6 tin nhắn gần nhất (3 cặp user-assistant)
             recent_messages = st.session_state.messages[-HISTORY_LIMIT:]
             history = [
                 msg
                 for msg in recent_messages
                 if msg.get("role") in {"user", "assistant"}
             ]
-            # Bỏ tin user cuối vì sẽ thêm lại bên dưới
             if history and history[-1].get("role") == "user":
                 history = history[:-1]
 
@@ -109,7 +100,7 @@ def _call_llm(client: OpenAI, user_text: str) -> str:
             )
             content = response.choices[0].message.content
             return content or FALLBACK_REPLY
-        except Exception as exc:  # noqa: BLE001 — fallback khi API lỗi
+        except Exception as exc:  # noqa: BLE001
             last_error = exc
             time.sleep(0.4)
 
@@ -118,11 +109,7 @@ def _call_llm(client: OpenAI, user_text: str) -> str:
 
 
 def _moderate_output(client: OpenAI, text: str) -> tuple[bool, str]:
-    """Kiểm tra output bằng LLM thứ 2 (self-critique).
-
-    Chỉ gọi khi output đã qua regex check. Dùng model nhỏ để tiết kiệm token.
-    Trả về (is_safe, reason). Fail-open nếu API lỗi.
-    """
+    """Kiểm tra output bằng LLM thứ 2 (self-critique)."""
     if not text or not text.strip():
         return True, ""
 
@@ -156,7 +143,6 @@ Trả lời CHỈ bằng JSON, không giải thích thêm:
         data = json.loads(content)
         return bool(data.get("safe", True)), str(data.get("reason", ""))
     except Exception:
-        # Fail-open: nếu moderation lỗi, cho qua (đã có regex check trước đó)
         return True, ""
 
 
@@ -170,38 +156,185 @@ def _record_stats() -> None:
     })
 
 
+# ============================================================
+# CUSTOM CSS — Animated financial dashboard theme
+# ============================================================
+CUSTOM_CSS = """
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
+
+html, body, [class*="css"] {
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+}
+
+@keyframes fadeInUp {
+    from { opacity: 0; transform: translateY(12px); }
+    to   { opacity: 1; transform: translateY(0); }
+}
+@keyframes slideInLeft {
+    from { opacity: 0; transform: translateX(-16px); }
+    to   { opacity: 1; transform: translateX(0); }
+}
+@keyframes gradientShift {
+    0%, 100% { background-position: 0% 50%; }
+    50%      { background-position: 100% 50%; }
+}
+@keyframes pulseGlow {
+    0%, 100% { box-shadow: 0 0 0 0 rgba(59, 130, 246, 0.4); }
+    50%      { box-shadow: 0 0 0 8px rgba(59, 130, 246, 0); }
+}
+
+h1 {
+    background: linear-gradient(270deg, #1e40af, #3b82f6, #06b6d4, #3b82f6);
+    background-size: 300% 300%;
+    animation: gradientShift 6s ease infinite;
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    font-weight: 800 !important;
+    letter-spacing: -0.02em;
+}
+
+[data-testid="stChatMessage"] {
+    border-radius: 16px;
+    padding: 12px 16px;
+    animation: fadeInUp 0.4s ease-out;
+    transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+[data-testid="stChatMessage"]:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 4px 12px rgba(59, 130, 246, 0.1);
+}
+
+[data-testid="stMetric"] {
+    background: linear-gradient(135deg, rgba(30, 64, 175, 0.1), rgba(59, 130, 246, 0.05));
+    border: 1px solid rgba(59, 130, 246, 0.2);
+    border-radius: 14px;
+    padding: 14px 16px;
+    margin-bottom: 10px;
+    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    animation: slideInLeft 0.4s ease-out backwards;
+}
+[data-testid="stMetric"]:hover {
+    transform: translateX(4px) scale(1.02);
+    border-color: rgba(59, 130, 246, 0.5);
+    box-shadow: 0 6px 20px rgba(59, 130, 246, 0.2);
+}
+[data-testid="stMetricValue"] {
+    font-size: 1.9rem !important;
+    font-weight: 800 !important;
+    color: #3b82f6 !important;
+    letter-spacing: -0.03em;
+}
+[data-testid="stMetricLabel"] {
+    font-size: 0.75rem !important;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    opacity: 0.8;
+    font-weight: 600;
+}
+
+[data-testid="stSidebar"] {
+    border-right: 1px solid rgba(59, 130, 246, 0.15);
+}
+[data-testid="stSidebar"] .stSubheader {
+    padding-top: 8px;
+    padding-bottom: 6px;
+    border-bottom: 1px solid rgba(59, 130, 246, 0.12);
+}
+
+.stButton > button, .stDownloadButton > button {
+    border-radius: 10px !important;
+    border: 1px solid rgba(59, 130, 246, 0.4) !important;
+    font-weight: 600 !important;
+    transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1) !important;
+}
+.stButton > button:hover, .stDownloadButton > button:hover {
+    background: linear-gradient(135deg, #1e40af, #3b82f6) !important;
+    color: white !important;
+    transform: translateY(-2px);
+    box-shadow: 0 6px 16px rgba(59, 130, 246, 0.3);
+}
+
+[data-testid="stAlert"] {
+    border-radius: 12px;
+    animation: fadeInUp 0.35s ease-out;
+}
+
+[data-testid="stChatInput"] textarea {
+    border-radius: 12px !important;
+    transition: box-shadow 0.2s ease;
+}
+[data-testid="stChatInput"] textarea:focus {
+    box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.2) !important;
+}
+
+hr {
+    margin: 1.5rem 0;
+    border-color: rgba(59, 130, 246, 0.12);
+}
+
+[data-testid="stLineChart"] {
+    border-radius: 12px;
+    overflow: hidden;
+    animation: fadeInUp 0.5s ease-out;
+}
+
+[data-testid="stToggle"] label {
+    font-weight: 500;
+}
+</style>
+"""
+
+HERO_HTML = """
+<div style="
+    background: linear-gradient(135deg, rgba(30,64,175,0.12), rgba(59,130,246,0.06));
+    border-left: 4px solid #3b82f6;
+    border-radius: 12px;
+    padding: 14px 20px;
+    margin-bottom: 10px;
+    animation: fadeInUp 0.5s ease-out;
+">
+    <div style="font-weight: 600; color: #3b82f6; margin-bottom: 4px; font-size: 1rem;">
+        🔒 Secure Financial Intelligence
+    </div>
+    <div style="font-size: 0.88rem; opacity: 0.8;">
+        Privacy-first guardrails for LLM finance chat — Powered by Llama 3 on Groq
+    </div>
+</div>
+"""
+
+
 def main() -> None:
     """Khởi chạy giao diện chat có guardrail."""
     st.set_page_config(page_title="FinGuard Agent", page_icon="🛡️", layout="centered")
+    st.markdown(CUSTOM_CSS, unsafe_allow_html=True)
     _init_state()
 
     st.title("🛡️ FinGuard Agent")
+    st.markdown(HERO_HTML, unsafe_allow_html=True)
     st.info(config.DISCLAIMER)
 
     with st.sidebar:
-        st.subheader("Metrics")
+        st.subheader("📊 Metrics")
         st.metric("Attacks Blocked", st.session_state.attacks_blocked)
         st.metric("PII Redacted", st.session_state.pii_redacted)
 
         st.divider()
 
-        # Số cuộc tấn công bị chặn theo thời gian
-        st.subheader("📊 Attacks over time")
+        st.subheader("📈 Attacks over time")
         if st.session_state.stats_history:
             df = pd.DataFrame(st.session_state.stats_history)
             st.line_chart(df, x="time", y="blocked", height=150)
         else:
             st.caption("Chưa có dữ liệu")
 
-        # Số PII đã che theo thời gian
-        st.subheader("📊 PII over time")
+        st.subheader("📈 PII over time")
         if st.session_state.stats_history:
             df = pd.DataFrame(st.session_state.stats_history)
             st.line_chart(df, x="time", y="pii", height=150)
         else:
             st.caption("Chưa có dữ liệu")
 
-        # Toggle deep moderation
         st.divider()
         st.toggle(
             "🛡️ Deep Moderation (LLM thứ 2)",
@@ -209,7 +342,6 @@ def main() -> None:
             help="Kiểm tra output bằng LLM thứ 2. Tốn gấp đôi token.",
         )
 
-        # Tải file nhật ký kiểm toán JSONL
         st.divider()
         audit_path = Path("logs/audit.jsonl")
         if audit_path.exists() and audit_path.stat().st_size > 0:
@@ -226,7 +358,7 @@ def main() -> None:
         else:
             st.caption("📭 Chưa có log")
 
-        if st.button("Xóa lịch sử"):
+        if st.button("🗑️ Xóa lịch sử", use_container_width=True):
             st.session_state.messages = []
             st.session_state.request_times = []
             st.rerun()
@@ -257,9 +389,6 @@ def main() -> None:
     started = time.perf_counter()
     result = guardrail.process_input(prompt)
 
-    # ============================================================
-    # LỚP 1+3 — Input bị chặn (injection hoặc compliance)
-    # ============================================================
     if not result.allowed:
         st.session_state.attacks_blocked += 1
         st.session_state.blocked_attacks += 1
@@ -283,9 +412,6 @@ def main() -> None:
         st.session_state.messages.append({"role": "assistant", "content": error_text})
         st.rerun()
 
-    # ============================================================
-    # LỚP 2 — PII masking
-    # ============================================================
     if result.findings:
         st.session_state.pii_redacted += len(result.findings)
         audit.log_event(
@@ -297,12 +423,8 @@ def main() -> None:
         )
         _record_stats()
         st.warning("Đã phát hiện và che thông tin nhạy cảm trước khi gửi tới mô hình.")
-        # Đánh dấu để rerun sau khi hiển thị xong
         st.session_state._should_rerun = True
 
-    # ============================================================
-    # LỚP 4 — Gọi LLM
-    # ============================================================
     client = _get_client()
     if client is None:
         raw_reply = "Thiếu NEBIUS_API_KEY trong môi trường. Không thể gọi mô hình."
@@ -311,9 +433,6 @@ def main() -> None:
         raw_reply = _call_llm(client, result.processed_text)
         model_name = config.MODEL_NAME
 
-    # ============================================================
-    # LỚP 5 — Kiểm tra output LLM (regex)
-    # ============================================================
     output = guardrail.process_output(raw_reply)
     latency_ms = int((time.perf_counter() - started) * 1000)
     audit.log_event(
@@ -334,9 +453,6 @@ def main() -> None:
         st.session_state.messages.append({"role": "assistant", "content": display})
         st.rerun()
 
-    # ============================================================
-    # LỚP 6 — Deep moderation bằng LLM thứ 2 (optional)
-    # ============================================================
     if st.session_state.get("moderation_on", True) and client is not None:
         is_safe, reason = _moderate_output(client, display)
         if not is_safe:
@@ -361,14 +477,10 @@ def main() -> None:
             )
             st.rerun()
 
-    # ============================================================
-    # Hiển thị phản hồi an toàn
-    # ============================================================
     with st.chat_message("assistant"):
         st.markdown(display)
     st.session_state.messages.append({"role": "assistant", "content": display})
 
-    # Nếu có PII vừa được mask, rerun để sidebar cập nhật ngay
     if st.session_state.pop("_should_rerun", False):
         st.rerun()
 
