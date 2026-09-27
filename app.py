@@ -303,6 +303,22 @@ HERO_HTML = """
 </div>
 """
 
+LOADING_HTML = """
+<div style="
+    display: flex; align-items: center; gap: 10px;
+    padding: 8px 0; opacity: 0.75;
+">
+    <div style="
+        width: 12px; height: 12px; border-radius: 50%;
+        background: #3b82f6;
+        animation: pulseGlow 1.4s ease-in-out infinite;
+    "></div>
+    <span style="font-size: 0.92rem;">
+        🛡️ Đang phân tích qua 6 lớp bảo mật...
+    </span>
+</div>
+"""
+
 
 def main() -> None:
     """Khởi chạy giao diện chat có guardrail."""
@@ -430,8 +446,14 @@ def main() -> None:
         raw_reply = "Thiếu NEBIUS_API_KEY trong môi trường. Không thể gọi mô hình."
         model_name = "none"
     else:
-        raw_reply = _call_llm(client, result.processed_text)
-        model_name = config.MODEL_NAME
+        # Skeleton loader với status text
+        with st.chat_message("assistant"):
+            status_placeholder = st.empty()
+            status_placeholder.markdown(LOADING_HTML, unsafe_allow_html=True)
+            with st.spinner("🤖 FinGuard đang suy nghĩ..."):
+                raw_reply = _call_llm(client, result.processed_text)
+                model_name = config.MODEL_NAME
+            status_placeholder.empty()
 
     output = guardrail.process_output(raw_reply)
     latency_ms = int((time.perf_counter() - started) * 1000)
