@@ -146,6 +146,56 @@ Trả lời CHỈ bằng JSON, không giải thích thêm:
         return True, ""
 
 
+def _show_error_card(title: str, description: str, hint: str = "") -> None:
+    """Hiển thị error card đẹp với title, mô tả, gợi ý."""
+    hint_html = (
+        f'<div style="margin-top: 8px; font-size: 0.85rem; opacity: 0.75;">'
+        f'💡 {hint}</div>'
+        if hint else ""
+    )
+    st.markdown(
+        f"""
+        <div style="
+            background: linear-gradient(135deg, rgba(220, 38, 38, 0.12), rgba(239, 68, 68, 0.05));
+            border-left: 4px solid #ef4444;
+            border-radius: 12px;
+            padding: 14px 20px;
+            margin: 8px 0;
+            animation: fadeInUp 0.35s ease-out;
+        ">
+            <div style="font-weight: 600; color: #ef4444; margin-bottom: 4px;">
+                ⛔ {title}
+            </div>
+            <div style="font-size: 0.9rem; opacity: 0.9;">{description}</div>
+            {hint_html}
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def _show_warning_card(title: str, description: str) -> None:
+    """Hiển thị warning card đẹp."""
+    st.markdown(
+        f"""
+        <div style="
+            background: linear-gradient(135deg, rgba(234, 179, 8, 0.12), rgba(250, 204, 21, 0.05));
+            border-left: 4px solid #eab308;
+            border-radius: 12px;
+            padding: 14px 20px;
+            margin: 8px 0;
+            animation: fadeInUp 0.35s ease-out;
+        ">
+            <div style="font-weight: 600; color: #ca8a04; margin-bottom: 4px;">
+                ⚠️ {title}
+            </div>
+            <div style="font-size: 0.9rem; opacity: 0.9;">{description}</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
 def _record_stats() -> None:
     """Ghi mốc blocked/PII theo thời gian cho biểu đồ sidebar."""
     st.session_state.blocked_attacks = int(st.session_state.attacks_blocked)
@@ -389,11 +439,18 @@ def main() -> None:
         return
 
     if len(prompt) > config.MAX_INPUT_LENGTH:
-        st.error(f"Tin nhắn vượt quá {config.MAX_INPUT_LENGTH} ký tự.")
+        _show_error_card(
+            "Tin nhắn quá dài",
+            f"Bạn đã nhập {len(prompt)} ký tự. Giới hạn là {config.MAX_INPUT_LENGTH}.",
+            "Vui lòng rút gọn câu hỏi hoặc chia thành nhiều tin nhắn.",
+        )
         return
 
     if not _rate_limit_ok():
-        st.error("Bạn đã gửi quá 10 tin trong 1 phút. Vui lòng chờ rồi thử lại.")
+        _show_warning_card(
+            "Đã đạt giới hạn tin nhắn",
+            f"Bạn chỉ có thể gửi tối đa {config.RATE_LIMIT_MAX_REQUESTS} tin mỗi phút.",
+        )
         return
 
     st.session_state.request_times.append(time.time())
@@ -422,9 +479,13 @@ def main() -> None:
             "output": "Phản hồi không an toàn.",
         }
         label = _LABELS.get(result.layer, "Yêu cầu bị chặn.")
-        error_text = f"⛔ {label}\n\nVui lòng nhập lại câu hỏi tài chính bình thường."
         with st.chat_message("assistant"):
-            st.error(error_text)
+            _show_error_card(
+                label,
+                "Yêu cầu này không được phép xử lý vì lý do bảo mật.",
+                "Vui lòng nhập lại câu hỏi tài chính bình thường.",
+            )
+        error_text = f"⛔ {label}"
         st.session_state.messages.append({"role": "assistant", "content": error_text})
         st.rerun()
 
@@ -446,7 +507,6 @@ def main() -> None:
         raw_reply = "Thiếu NEBIUS_API_KEY trong môi trường. Không thể gọi mô hình."
         model_name = "none"
     else:
-        # Skeleton loader với status text
         with st.chat_message("assistant"):
             status_placeholder = st.empty()
             status_placeholder.markdown(LOADING_HTML, unsafe_allow_html=True)
@@ -471,8 +531,14 @@ def main() -> None:
         st.session_state.blocked_attacks += 1
         _record_stats()
         with st.chat_message("assistant"):
-            st.error(display)
-        st.session_state.messages.append({"role": "assistant", "content": display})
+            _show_error_card(
+                "Phản hồi không an toàn",
+                "Câu trả lời của mô hình chứa nội dung không phù hợp.",
+                "Vui lòng hỏi lại bằng cách khác.",
+            )
+        st.session_state.messages.append(
+            {"role": "assistant", "content": "⛔ Phản hồi không an toàn"}
+        )
         st.rerun()
 
     if st.session_state.get("moderation_on", True) and client is not None:
@@ -488,14 +554,14 @@ def main() -> None:
             st.session_state.attacks_blocked += 1
             st.session_state.blocked_attacks += 1
             _record_stats()
-            blocked_msg = (
-                f"⛔ Phản hồi bị chặn bởi bộ kiểm duyệt.\n\n"
-                f"Lý do: {reason or 'Nội dung không an toàn.'}"
-            )
             with st.chat_message("assistant"):
-                st.error(blocked_msg)
+                _show_error_card(
+                    "Phản hồi bị chặn bởi bộ kiểm duyệt",
+                    reason or "Nội dung không đáp ứng tiêu chuẩn an toàn.",
+                    "Vui lòng hỏi lại bằng cách khác.",
+                )
             st.session_state.messages.append(
-                {"role": "assistant", "content": blocked_msg}
+                {"role": "assistant", "content": "⛔ Bị chặn bởi bộ kiểm duyệt"}
             )
             st.rerun()
 
