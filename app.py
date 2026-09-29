@@ -17,6 +17,7 @@ import audit
 import config
 import guardrail
 import rate_limit
+import reasoning
 
 load_dotenv()
 
@@ -66,7 +67,11 @@ def _call_llm(client: OpenAI, user_text: str) -> str:
     for _ in range(attempts):
         try:
             recent_messages = st.session_state.messages[-HISTORY_LIMIT:]
-            history = [msg for msg in recent_messages if msg.get("role") in {"user", "assistant"}]
+            history = [
+                {"role": msg["role"], "content": msg["content"]}
+                for msg in recent_messages
+                if msg.get("role") in {"user", "assistant"}
+            ]
             if history and history[-1].get("role") == "user":
                 history = history[:-1]
 
@@ -188,6 +193,14 @@ def _record_stats() -> None:
             "pii": st.session_state.pii_redacted,
         }
     )
+
+
+def _render_message(message: dict) -> None:
+    """Hiển thị 1 message, có thể kèm reasoning panel."""
+    with st.chat_message(message["role"]):
+        if message.get("reasoning_html"):
+            st.markdown(message["reasoning_html"], unsafe_allow_html=True)
+        st.markdown(message["content"])
 
 
 CUSTOM_CSS = """
@@ -345,7 +358,7 @@ LOADING_HTML = """
         animation: pulseGlow 1.4s ease-in-out infinite;
     "></div>
     <span style="font-size: 0.92rem;">
-        Analyzing through 6 security layers...
+        Analyzing through 7 security layers...
     </span>
 </div>
 """
@@ -367,7 +380,6 @@ def main() -> None:
         st.metric("Attacks Blocked", st.session_state.attacks_blocked)
         st.metric("PII Redacted", st.session_state.pii_redacted)
 
-        # Rate limiter backend status
         backend_info = rate_limit.get_redis_status()
         if backend_info["backend"] == "redis":
             st.caption(f"Rate limiter: Redis ({backend_info['host']})")
@@ -399,7 +411,6 @@ def main() -> None:
 
         st.divider()
 
-        # Download audit log
         audit_path = Path("logs/audit_chain.jsonl")
         if audit_path.exists() and audit_path.stat().st_size > 0:
             with open(audit_path, encoding="utf-8") as f:
@@ -415,7 +426,6 @@ def main() -> None:
         else:
             st.caption("No logs yet")
 
-        # Verify hash chain integrity
         if st.button("Verify Log Integrity", use_container_width=True):
             is_valid, total, msg = audit.verify_chain()
             if is_valid:
@@ -430,9 +440,9 @@ def main() -> None:
             rate_limit.reset_user("default_user")
             st.rerun()
 
+    # Hiển thị lịch sử chat
     for message in st.session_state.messages:
-        with st.chat_message(message["role"]):
-            st.markdown(message["content"])
+        _render_message(message)
 
     prompt = st.chat_input("Ask a financial question (do not send card, CVV, OTP)...")
     if not prompt:
@@ -446,8 +456,7 @@ def main() -> None:
         )
         return
 
-    # Redis-based rate limit (fallback memory)
-    allowed, remaining = rate_limit.check_rate_limit("default_user")
+    allowed, _remaining = rate_limit.check_rate_limit("default_user")
     if not allowed:
         _show_warning_card(
             "Rate limit reached",
@@ -463,6 +472,7 @@ def main() -> None:
     started = time.perf_counter()
     result = guardrail.process_input(prompt)
 
+    # Layer 1+3 — Input blocked
     if not result.allowed:
         st.session_state.attacks_blocked += 1
         st.session_state.blocked_attacks += 1
@@ -490,6 +500,7 @@ def main() -> None:
         st.session_state.messages.append({"role": "assistant", "content": error_text})
         st.rerun()
 
+    # Layer 2 — PII masking
     if result.findings:
         st.session_state.pii_redacted += len(result.findings)
         audit.log_event(
@@ -503,6 +514,7 @@ def main() -> None:
         st.warning("Sensitive information detected and redacted before sending to the model.")
         st.session_state._should_rerun = True
 
+    # Layer 4 — LLM call with loading state
     client = _get_client()
     if client is None:
         raw_reply = "Missing NEBIUS_API_KEY in environment. Cannot call model."
@@ -516,17 +528,34 @@ def main() -> None:
                 model_name = config.MODEL_NAME
             status_placeholder.empty()
 
-    output = guardrail.process_output(raw_reply)
+    # Layer 5 — Parse reasoning
+    reasoning_result = reasoning.parse_reasoning(raw_reply)
+
+    if reasoning_result.parsed_ok:
+        # Moderation checks the answer field (what user sees)
+        text_for_moderation = reasoning_result.answer
+        display_text = reasoning_result.answer
+        reasoning_html = reasoning.format_reasoning_html(reasoning_result)
+    else:
+        text_for_moderation = raw_reply
+        display_text = raw_reply
+        reasoning_html = ""
+
+    # Layer 6 — Output validation (regex)
+    output = guardrail.process_output(text_for_moderation)
     latency_ms = int((time.perf_counter() - started) * 1000)
     audit.log_event(
         event_type="output_checked" if output.allowed else "output_blocked",
         layer=output.layer,
         reason=output.reason,
         risk_score=output.risk_score,
-        extra={"model": model_name, "latency_ms": latency_ms, "pii_count": 0},
+        extra={
+            "model": model_name,
+            "latency_ms": latency_ms,
+            "pii_count": 0,
+        },
     )
 
-    display = output.processed_text
     if not output.allowed:
         st.session_state.attacks_blocked += 1
         st.session_state.blocked_attacks += 1
@@ -542,8 +571,9 @@ def main() -> None:
         )
         st.rerun()
 
+    # Layer 7 — Deep moderation
     if st.session_state.get("moderation_on", True) and client is not None:
-        is_safe, reason = _moderate_output(client, display)
+        is_safe, reason = _moderate_output(client, display_text)
         if not is_safe:
             audit.log_event(
                 event_type="output_blocked",
@@ -566,9 +596,19 @@ def main() -> None:
             )
             st.rerun()
 
+    # Display final response
     with st.chat_message("assistant"):
-        st.markdown(display)
-    st.session_state.messages.append({"role": "assistant", "content": display})
+        if reasoning_html:
+            st.markdown(reasoning_html, unsafe_allow_html=True)
+        st.markdown(display_text)
+
+    st.session_state.messages.append(
+        {
+            "role": "assistant",
+            "content": display_text,
+            "reasoning_html": reasoning_html,
+        }
+    )
 
     if st.session_state.pop("_should_rerun", False):
         st.rerun()
