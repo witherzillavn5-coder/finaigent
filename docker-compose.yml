@@ -1,0 +1,43 @@
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: finaigent-app
+    ports:
+      - "8501:8501"
+    environment:
+      - NEBIUS_API_KEY=${NEBIUS_API_KEY}
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+    env_file:
+      - .env
+    depends_on:
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - finaigent-network
+
+  redis:
+    image: redis:7-alpine
+    container_name: finaigent-redis
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
+    networks:
+      - finaigent-network
+    volumes:
+      - redis-data:/data
+
+volumes:
+  redis-data:
+
+networks:
+  finaigent-network:
+    driver: bridge
