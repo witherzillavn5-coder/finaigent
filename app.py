@@ -84,6 +84,8 @@ SAFETY:
 
 
 def _init_state() -> None:
+    if "theme" not in st.session_state:
+        st.session_state.theme = config.THEME_DEFAULT
     if "messages" not in st.session_state:
         st.session_state.messages = []
     if "attacks_blocked" not in st.session_state:
@@ -771,9 +773,139 @@ def _maybe_record_summary() -> None:
     memory.append_conversation_summary(summary)
 
 
-CUSTOM_CSS = """
+CUSTOM_CSS_DARK = """
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
+
+/* ========== BASE DARK BACKGROUND ========== */
+html, body {
+    background-color: #0e1117 !important;
+    color: #e6e6e6 !important;
+}
+
+.stApp,
+[data-testid="stAppViewContainer"],
+[data-testid="stMain"],
+[data-testid="stMainBlockContainer"],
+[data-testid="stSidebar"] {
+    background-color: #0e1117 !important;
+    color: #e6e6e6 !important;
+}
+
+[data-testid="stHeader"] {
+    background-color: #0e1117 !important;
+    color: #e6e6e6 !important;
+}
+
+[data-testid="stMarkdownContainer"] p,
+[data-testid="stMarkdownContainer"] h1,
+[data-testid="stMarkdownContainer"] h2,
+[data-testid="stMarkdownContainer"] h3,
+[data-testid="stMarkdownContainer"] h4,
+[data-testid="stMarkdownContainer"] li,
+[data-testid="stMarkdownContainer"] ul,
+[data-testid="stMarkdownContainer"] ol,
+[data-testid="stMarkdownContainer"] strong,
+[data-testid="stMarkdownContainer"] em,
+[data-testid="stMarkdownContainer"] a,
+[data-testid="stMarkdownContainer"] span {
+    color: #e6e6e6 !important;
+}
+
+[data-testid="stMarkdownContainer"] a {
+    color: #3b82f6 !important;
+    text-decoration: underline;
+}
+
+[data-testid="stChatInput"] textarea {
+    background-color: #1a1f2e !important;
+    color: #e6e6e6 !important;
+    border: 1px solid rgba(59, 130, 246, 0.3) !important;
+}
+
+[data-testid="stChatInput"] textarea::placeholder {
+    color: #6b7280 !important;
+}
+
+[data-testid="stExpander"] {
+    background-color: #161b26 !important;
+    border: 1px solid rgba(59, 130, 246, 0.2) !important;
+}
+
+[data-testid="stExpander"] summary {
+    color: #e6e6e6 !important;
+}
+
+[data-testid="stExpander"] * {
+    color: #e6e6e6 !important;
+}
+
+[data-testid="stRadio"] label,
+[data-testid="stRadio"] *,
+[data-testid="stSidebar"] * {
+    color: #e6e6e6 !important;
+}
+
+[data-testid="stFileUploader"] {
+    background-color: #161b26 !important;
+    border: 1px dashed rgba(59, 130, 246, 0.3) !important;
+    border-radius: 10px;
+}
+
+[data-testid="stFileUploader"] * {
+    color: #e6e6e6 !important;
+}
+
+[data-testid="stFileUploaderDropzone"] {
+    background-color: #161b26 !important;
+}
+
+[data-testid="stTextInput"] input,
+[data-testid="stNumberInput"] input,
+[data-testid="stTextArea"] textarea {
+    background-color: #1a1f2e !important;
+    color: #e6e6e6 !important;
+    border: 1px solid rgba(59, 130, 246, 0.3) !important;
+    border-radius: 8px;
+}
+
+[data-testid="stSelectbox"] > div > div {
+    background-color: #1a1f2e !important;
+    color: #e6e6e6 !important;
+    border: 1px solid rgba(59, 130, 246, 0.3) !important;
+}
+
+[data-testid="stToggle"] * {
+    color: #e6e6e6 !important;
+}
+
+[data-testid="stAlert"] {
+    background-color: #161b26 !important;
+    border-radius: 12px;
+}
+
+[data-testid="stAlert"] * {
+    color: #e6e6e6 !important;
+}
+
+hr {
+    border-color: rgba(59, 130, 246, 0.15) !important;
+}
+/* ========== END BASE DARK ========== */
+
+:root {
+    --bg-primary: #0e1117;
+    --bg-secondary: #1a1f2e;
+    --bg-chat: #161b26;
+    --text-primary: #e6e6e6;
+    --text-secondary: #a0a0a0;
+    --accent: #3b82f6;
+    --accent-dark: #1e40af;
+    --border: rgba(59, 130, 246, 0.15);
+    --success: #10b981;
+    --warning: #eab308;
+    --error: #ef4444;
+}
 
 html, body, [class*="css"] {
     font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
@@ -873,6 +1005,247 @@ hr {
 </style>
 """
 
+CUSTOM_CSS_LIGHT = """
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
+
+/* ========== BASE LIGHT BACKGROUND ========== */
+html, body {
+    background-color: #ffffff !important;
+    color: #0f172a !important;
+}
+
+.stApp,
+[data-testid="stAppViewContainer"],
+[data-testid="stMain"],
+[data-testid="stMainBlockContainer"] {
+    background-color: #ffffff !important;
+    color: #0f172a !important;
+}
+
+[data-testid="stHeader"] {
+    background-color: #ffffff !important;
+    color: #0f172a !important;
+}
+
+[data-testid="stMarkdownContainer"] p,
+[data-testid="stMarkdownContainer"] h1,
+[data-testid="stMarkdownContainer"] h2,
+[data-testid="stMarkdownContainer"] h3,
+[data-testid="stMarkdownContainer"] h4,
+[data-testid="stMarkdownContainer"] li,
+[data-testid="stMarkdownContainer"] ul,
+[data-testid="stMarkdownContainer"] ol,
+[data-testid="stMarkdownContainer"] strong,
+[data-testid="stMarkdownContainer"] em,
+[data-testid="stMarkdownContainer"] span {
+    color: #0f172a !important;
+}
+
+[data-testid="stMarkdownContainer"] a {
+    color: #2563eb !important;
+    text-decoration: underline;
+}
+
+[data-testid="stChatInput"] textarea {
+    background-color: #ffffff !important;
+    color: #0f172a !important;
+    border: 1px solid #cbd5e1 !important;
+}
+
+[data-testid="stChatInput"] textarea::placeholder {
+    color: #94a3b8 !important;
+}
+
+[data-testid="stExpander"] {
+    background-color: #f8fafc !important;
+    border: 1px solid #e2e8f0 !important;
+}
+
+[data-testid="stExpander"] summary,
+[data-testid="stExpander"] * {
+    color: #0f172a !important;
+}
+
+[data-testid="stRadio"] label,
+[data-testid="stRadio"] * {
+    color: #0f172a !important;
+}
+
+[data-testid="stFileUploader"] {
+    background-color: #f8fafc !important;
+    border: 1px dashed #cbd5e1 !important;
+    border-radius: 10px;
+}
+
+[data-testid="stFileUploader"] * {
+    color: #0f172a !important;
+}
+
+[data-testid="stFileUploaderDropzone"] {
+    background-color: #f8fafc !important;
+}
+
+[data-testid="stTextInput"] input,
+[data-testid="stNumberInput"] input,
+[data-testid="stTextArea"] textarea {
+    background-color: #ffffff !important;
+    color: #0f172a !important;
+    border: 1px solid #cbd5e1 !important;
+    border-radius: 8px;
+}
+
+[data-testid="stSelectbox"] > div > div {
+    background-color: #ffffff !important;
+    color: #0f172a !important;
+    border: 1px solid #cbd5e1 !important;
+}
+
+[data-testid="stToggle"] * {
+    color: #0f172a !important;
+}
+
+[data-testid="stAlert"] {
+    background-color: #f8fafc !important;
+    border-radius: 12px;
+}
+
+[data-testid="stAlert"] * {
+    color: #0f172a !important;
+}
+
+hr {
+    border-color: #e2e8f0 !important;
+}
+/* ========== END BASE LIGHT ========== */
+
+:root {
+    --bg-primary: #ffffff;
+    --bg-secondary: #f8fafc;
+    --bg-chat: #ffffff;
+    --text-primary: #0f172a;
+    --text-secondary: #475569;
+    --accent: #2563eb;
+    --accent-dark: #1e40af;
+    --border: rgba(37, 99, 235, 0.15);
+    --success: #16a34a;
+    --warning: #ca8a04;
+    --error: #dc2626;
+}
+
+html, body, [class*="css"] {
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+    background: #ffffff;
+    color: #0f172a;
+}
+
+.stApp {
+    background: #ffffff;
+}
+
+@keyframes fadeInUp {
+    from { opacity: 0; transform: translateY(12px); }
+    to   { opacity: 1; transform: translateY(0); }
+}
+@keyframes slideInLeft {
+    from { opacity: 0; transform: translateX(-16px); }
+    to   { opacity: 1; transform: translateX(0); }
+}
+@keyframes gradientShift {
+    0%, 100% { background-position: 0% 50%; }
+    50%      { background-position: 100% 50%; }
+}
+
+h1 {
+    background: linear-gradient(270deg, #1e40af, #2563eb, #0891b2, #2563eb);
+    background-size: 300% 300%;
+    animation: gradientShift 6s ease infinite;
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    font-weight: 800 !important;
+    letter-spacing: -0.02em;
+}
+
+[data-testid="stChatMessage"] {
+    background: #f8fafc;
+    border: 1px solid #e2e8f0;
+    border-radius: 16px;
+    padding: 12px 16px;
+    animation: fadeInUp 0.4s ease-out;
+}
+[data-testid="stChatMessage"]:hover {
+    box-shadow: 0 4px 12px rgba(37, 99, 235, 0.08);
+}
+
+[data-testid="stChatMessageAvatarUser"],
+[data-testid="stChatMessageAvatarAssistant"],
+[data-testid="chatAvatarIcon-user"],
+[data-testid="chatAvatarIcon-assistant"] {
+    display: none !important;
+}
+
+[data-testid="stMetric"] {
+    background: linear-gradient(135deg, rgba(37, 99, 235, 0.08), rgba(37, 99, 235, 0.03));
+    border: 1px solid rgba(37, 99, 235, 0.2);
+    border-radius: 14px;
+    padding: 14px 16px;
+    margin-bottom: 10px;
+    animation: slideInLeft 0.4s ease-out backwards;
+}
+[data-testid="stMetricValue"] {
+    font-size: 1.9rem !important;
+    font-weight: 800 !important;
+    color: #2563eb !important;
+}
+[data-testid="stMetricLabel"] {
+    font-size: 0.75rem !important;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    opacity: 0.7;
+    color: #475569;
+    font-weight: 600;
+}
+
+[data-testid="stSidebar"] {
+    background: #f8fafc;
+    border-right: 1px solid #e2e8f0;
+}
+
+[data-testid="stSidebar"] * {
+    color: #0f172a !important;
+}
+
+.stButton > button, .stDownloadButton > button {
+    background: #ffffff !important;
+    color: #0f172a !important;
+    border-radius: 10px !important;
+    border: 1px solid rgba(37, 99, 235, 0.4) !important;
+    font-weight: 600 !important;
+}
+.stButton > button:hover, .stDownloadButton > button:hover {
+    background: linear-gradient(135deg, #1e40af, #2563eb) !important;
+    color: white !important;
+}
+
+[data-testid="stAlert"] {
+    border-radius: 12px;
+    animation: fadeInUp 0.35s ease-out;
+}
+
+[data-testid="stChatInput"] textarea {
+    background: #ffffff !important;
+    color: #0f172a !important;
+    border-radius: 12px !important;
+    border: 1px solid #cbd5e1 !important;
+}
+
+hr {
+    margin: 1.5rem 0;
+    border-color: rgba(37, 99, 235, 0.15);
+}
+</style>
+"""
+
 HERO_HTML = """
 <div style="
     background: linear-gradient(135deg, rgba(30,64,175,0.12), rgba(59,130,246,0.06));
@@ -908,9 +1281,23 @@ LOADING_HTML = """
 """
 
 
+def _sync_theme_selection() -> None:
+    selected_theme = st.session_state.theme_radio.lower()
+    if selected_theme in {"dark", "light"}:
+        st.session_state.theme = selected_theme
+        st.query_params["theme"] = selected_theme
+
+
 def main() -> None:
     st.set_page_config(page_title="FinGuard Agent", layout="centered")
-    st.markdown(CUSTOM_CSS, unsafe_allow_html=True)
+    if "theme" not in st.session_state:
+        _query_theme = st.query_params.get("theme", config.THEME_DEFAULT)
+        st.session_state.theme = (
+            _query_theme if _query_theme in {"dark", "light"} else config.THEME_DEFAULT
+        )
+    _theme = st.session_state.theme
+    _css = CUSTOM_CSS_LIGHT if _theme == "light" else CUSTOM_CSS_DARK
+    st.markdown(_css, unsafe_allow_html=True)
     _init_state()
 
     st.title("FinGuard Agent")
@@ -922,6 +1309,16 @@ def main() -> None:
         st.subheader("Metrics")
         st.metric("Attacks Blocked", st.session_state.attacks_blocked)
         st.metric("PII Redacted", st.session_state.pii_redacted)
+
+        st.divider()
+        st.radio(
+            "Theme",
+            options=["Dark", "Light"],
+            index=0 if st.session_state.theme == "dark" else 1,
+            horizontal=True,
+            key="theme_radio",
+            on_change=_sync_theme_selection,
+        )
 
         backend_info = rate_limit.get_redis_status()
         if backend_info["backend"] == "redis":

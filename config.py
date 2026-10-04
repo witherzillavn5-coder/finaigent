@@ -87,3 +87,6 @@ DEBATE_TRIGGER_COMPLEXITY = {"moderate", "complex"}
 # Voice input
 VOICE_ENABLED_DEFAULT = True
 VOICE_LANGUAGE = "en"  # Auto-detect; set to "vi" or "en" to force
+
+# Theme
+THEME_DEFAULT = "dark"
