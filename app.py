@@ -22,6 +22,7 @@ import document_parser
 import guardrail
 import memory
 import rate_limit
+from agent.debate import format_debate_trace, run_debate
 from agent.executor import execute_plan, format_execution_trace
 from agent.planner import ExecutionPlan, create_plan
 from tools import registry
@@ -94,6 +95,8 @@ def _init_state() -> None:
         st.session_state._should_rerun = False
     if "moderation_on" not in st.session_state:
         st.session_state.moderation_on = True
+    if "debate_on" not in st.session_state:
+        st.session_state.debate_on = config.DEBATE_ENABLED_DEFAULT
     if "uploaded_docs" not in st.session_state:
         st.session_state.uploaded_docs = []
     if "uploader_key" not in st.session_state:
@@ -261,6 +264,7 @@ def _call_llm_agentic(
     user_query: str,
     docs: List[document_parser.ParsedDocument] | None = None,
     profile_context: str = "",
+    use_debate: bool = False,
 ) -> tuple[str, str, List[str], str]:
     from agent.executor import format_failures_for_replan
     from agent.planner import replan_with_failures
@@ -301,7 +305,15 @@ def _call_llm_agentic(
     if attempts > 0:
         trace_md = f"_(Self-corrected after {attempts} retry attempt(s))_\n\n" + trace_md
 
-    short_answer = _generate_short_answer(client, user_query, trace_md, docs, profile_context)
+    final_query = user_query
+    if use_debate and plan.complexity in config.DEBATE_TRIGGER_COMPLEXITY:
+        debate_result = run_debate(client, user_query, context=trace_md)
+        if debate_result.success:
+            debate_trace = format_debate_trace(debate_result)
+            trace_md = f"{trace_md}\n\n---\n\n{debate_trace}"
+            final_query = f"{user_query}\n\n[The Judge concluded: {debate_result.judge_view}]"
+
+    short_answer = _generate_short_answer(client, final_query, trace_md, docs, profile_context)
     return short_answer, trace_md, tools_used, plan_reasoning
 
 
@@ -646,6 +658,7 @@ def _process_user_turn(
                     result.processed_text,
                     docs=docs,
                     profile_context=profile_context,
+                    use_debate=st.session_state.get("debate_on", False),
                 )
             status_placeholder.empty()
 
@@ -987,6 +1000,12 @@ def main() -> None:
             "Deep Moderation (2nd LLM)",
             key="moderation_on",
             help="Verify output with a second LLM. Doubles token usage.",
+        )
+        st.toggle(
+            "Multi-Agent Debate",
+            key="debate_on",
+            help="Run 3 agents (Optimist/Skeptic/Judge) for complex questions. "
+            "Adds ~3s latency but improves answer quality.",
         )
 
         st.divider()
