@@ -7,7 +7,7 @@ import os
 import re
 import time
 import uuid
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Iterator, List
 
@@ -20,6 +20,7 @@ import audit
 import config
 import document_parser
 import guardrail
+import memory
 import rate_limit
 from agent.executor import execute_plan, format_execution_trace
 from agent.planner import ExecutionPlan, create_plan
@@ -55,9 +56,10 @@ STRICT RULES — you MUST follow ALL:
 9. Do NOT repeat the question.
 10. Do NOT start with a disclaimer.
 11. Use the user's language (Vietnamese or English).
-12. If execution trace shows "✗ Failed" or no tool result, DO NOT invent numbers.
+12. If execution trace shows "X Failed" or no tool result, DO NOT invent numbers.
 13. If a document is provided, use its data for analysis.
 14. If an image is provided, describe relevant financial info from it.
+15. If USER PROFILE is provided, personalize the answer to their situation.
 
 EXAMPLE OUTPUT:
 Với thu nhập 30 triệu/tháng, mua nhà 2 tỷ trong 5 năm là không khả thi.
@@ -100,6 +102,10 @@ def _init_state() -> None:
         st.session_state.pending_regenerate = None
     if "pending_edit" not in st.session_state:
         st.session_state.pending_edit = None
+    if "user_profile" not in st.session_state:
+        st.session_state.user_profile = memory.load_profile()
+    if "session_started_at" not in st.session_state:
+        st.session_state.session_started_at = datetime.now(UTC).isoformat()
 
 
 def _get_client() -> OpenAI | None:
@@ -177,10 +183,15 @@ def _build_multimodal_content(
     user_query: str,
     trace_md: str,
     docs: List[document_parser.ParsedDocument],
+    profile_context: str = "",
 ) -> list[dict]:
     content: list[dict] = []
 
     text_parts = [f"QUESTION: {user_query}", ""]
+
+    if profile_context:
+        text_parts.append(profile_context)
+        text_parts.append("")
 
     text_docs = [d for d in docs if d.file_type in {"pdf", "txt"} and d.success]
     if text_docs:
@@ -215,9 +226,10 @@ def _generate_short_answer(
     user_query: str,
     trace_md: str,
     docs: List[document_parser.ParsedDocument] | None = None,
+    profile_context: str = "",
 ) -> str:
     docs = docs or []
-    multimodal_content = _build_multimodal_content(user_query, trace_md, docs)
+    multimodal_content = _build_multimodal_content(user_query, trace_md, docs, profile_context)
 
     messages = [
         {"role": "system", "content": SHORT_ANSWER_PROMPT},
@@ -248,6 +260,7 @@ def _call_llm_agentic(
     client: OpenAI,
     user_query: str,
     docs: List[document_parser.ParsedDocument] | None = None,
+    profile_context: str = "",
 ) -> tuple[str, str, List[str], str]:
     from agent.executor import format_failures_for_replan
     from agent.planner import replan_with_failures
@@ -288,7 +301,7 @@ def _call_llm_agentic(
     if attempts > 0:
         trace_md = f"_(Self-corrected after {attempts} retry attempt(s))_\n\n" + trace_md
 
-    short_answer = _generate_short_answer(client, user_query, trace_md, docs)
+    short_answer = _generate_short_answer(client, user_query, trace_md, docs, profile_context)
     return short_answer, trace_md, tools_used, plan_reasoning
 
 
@@ -418,7 +431,6 @@ def _stream_text(text: str, total_duration: float = 1.5) -> Iterator[str]:
 
 
 def _action_buttons(msg_id: str, role: str, msg_index: int) -> None:
-    """Render regenerate/edit buttons under a message."""
     if role == "assistant":
         cols = st.columns([1, 1, 6])
         with cols[0]:
@@ -444,7 +456,7 @@ def _action_buttons(msg_id: str, role: str, msg_index: int) -> None:
 
 
 def _render_message(message: dict, msg_index: int) -> None:
-    with st.chat_message(message["role"], avatar=""):
+    with st.chat_message(message["role"]):
         tools_used = message.get("tools_used") or []
         if tools_used:
             _show_tools_badge(tools_used)
@@ -463,8 +475,103 @@ def _render_message(message: dict, msg_index: int) -> None:
         _action_buttons(message.get("id", f"msg{msg_index}"), message["role"], msg_index)
 
 
-def _process_user_turn(client: OpenAI, prompt: str) -> None:
-    """Handle a user turn: guardrail → LLM → display → save."""
+def _render_profile_editor() -> None:
+    """Sidebar section for editing user profile."""
+    st.subheader("User Profile")
+
+    profile: memory.UserProfile = st.session_state.user_profile
+
+    with st.expander("Edit profile", expanded=profile.is_empty()):
+        with st.form("profile_form", clear_on_submit=False):
+            name = st.text_input("Name", value=profile.name)
+            age = st.number_input(
+                "Age",
+                min_value=0,
+                max_value=120,
+                value=profile.age,
+                step=1,
+            )
+            monthly_income = st.number_input(
+                "Monthly income",
+                min_value=0.0,
+                value=float(profile.monthly_income),
+                step=1000000.0,
+                format="%.0f",
+            )
+            monthly_expenses = st.number_input(
+                "Monthly expenses",
+                min_value=0.0,
+                value=float(profile.monthly_expenses),
+                step=1000000.0,
+                format="%.0f",
+            )
+            savings_goal = st.text_input(
+                "Savings goal",
+                value=profile.savings_goal,
+                placeholder="e.g., Buy house 2B VND in 5 years",
+            )
+            risk_tolerance = st.selectbox(
+                "Risk tolerance",
+                options=["", "low", "medium", "high"],
+                index=["", "low", "medium", "high"].index(profile.risk_tolerance)
+                if profile.risk_tolerance in {"", "low", "medium", "high"}
+                else 0,
+            )
+            currency = st.selectbox(
+                "Currency",
+                options=["VND", "USD", "EUR"],
+                index=["VND", "USD", "EUR"].index(profile.currency)
+                if profile.currency in {"VND", "USD", "EUR"}
+                else 0,
+            )
+            notes = st.text_area(
+                "Notes",
+                value=profile.notes,
+                placeholder="Any additional context...",
+                height=80,
+            )
+
+            col1, col2 = st.columns(2)
+            with col1:
+                save = st.form_submit_button("Save", use_container_width=True)
+            with col2:
+                clear = st.form_submit_button("Clear", use_container_width=True)
+
+            if save:
+                updated = memory.UserProfile(
+                    name=name,
+                    age=int(age),
+                    monthly_income=float(monthly_income),
+                    monthly_expenses=float(monthly_expenses),
+                    savings_goal=savings_goal,
+                    risk_tolerance=risk_tolerance,
+                    currency=currency,
+                    notes=notes,
+                )
+                memory.save_profile(updated)
+                st.session_state.user_profile = updated
+                st.success("Profile saved.")
+                st.rerun()
+
+            if clear:
+                memory.clear_profile()
+                st.session_state.user_profile = memory.UserProfile()
+                st.success("Profile cleared.")
+                st.rerun()
+
+    if not profile.is_empty():
+        st.caption(
+            f"Active: {profile.name or 'unnamed'}"
+            + (f", {profile.age}y" if profile.age else "")
+            + (f", {profile.currency}" if profile.currency else "")
+        )
+
+
+def _process_user_turn(
+    client: OpenAI,
+    prompt: str,
+    profile_context: str = "",
+) -> None:
     with st.chat_message("user"):
         st.markdown(prompt)
     st.session_state.messages.append(
@@ -538,6 +645,7 @@ def _process_user_turn(client: OpenAI, prompt: str) -> None:
                     client,
                     result.processed_text,
                     docs=docs,
+                    profile_context=profile_context,
                 )
             status_placeholder.empty()
 
@@ -612,8 +720,35 @@ def _process_user_turn(client: OpenAI, prompt: str) -> None:
         }
     )
 
+    # Record conversation summary when session ends
+    _maybe_record_summary()
+
     if st.session_state.pop("_should_rerun", False):
         st.rerun()
+
+
+def _maybe_record_summary() -> None:
+    """Record a conversation summary if this is the first assistant message."""
+    assistant_count = sum(1 for m in st.session_state.messages if m["role"] == "assistant")
+    if assistant_count != 1:
+        return
+
+    first_user = next(
+        (m["content"] for m in st.session_state.messages if m["role"] == "user"),
+        "",
+    )
+    all_tools: list[str] = []
+    for m in st.session_state.messages:
+        all_tools.extend(m.get("tools_used") or [])
+
+    summary = memory.ConversationSummary(
+        session_id=st.session_state.session_started_at,
+        started_at=st.session_state.session_started_at,
+        message_count=len(st.session_state.messages),
+        first_user_message=first_user[:200],
+        tools_used=sorted(set(all_tools)),
+    )
+    memory.append_conversation_summary(summary)
 
 
 CUSTOM_CSS = """
@@ -658,6 +793,13 @@ h1 {
 }
 [data-testid="stChatMessage"]:hover {
     box-shadow: 0 4px 12px rgba(59, 130, 246, 0.1);
+}
+
+[data-testid="stChatMessageAvatarUser"],
+[data-testid="stChatMessageAvatarAssistant"],
+[data-testid="chatAvatarIcon-user"],
+[data-testid="chatAvatarIcon-assistant"] {
+    display: none !important;
 }
 
 [data-testid="stMetric"] {
@@ -708,12 +850,6 @@ hr {
     margin: 1.5rem 0;
     border-color: rgba(59, 130, 246, 0.12);
 }
-[data-testid="stChatMessageAvatarUser"],
-[data-testid="stChatMessageAvatarAssistant"],
-[data-testid="chatAvatarIcon-user"],
-[data-testid="chatAvatarIcon-assistant"] {
-    display: none !important;
-}
 </style>
 """
 
@@ -730,7 +866,7 @@ HERO_HTML = """
         Secure Financial Intelligence
     </div>
     <div style="font-size: 0.88rem; opacity: 0.8;">
-        Agentic LLM with self-correction, financial tools, multi-file + image analysis, and 7 security layers.
+        Agentic LLM with persistent memory, self-correction, financial tools, and 7 security layers.
     </div>
 </div>
 """
@@ -758,7 +894,7 @@ def main() -> None:
     _init_state()
 
     st.title("FinGuard Agent")
-    st.caption("Agentic Financial AI Assistant with planning, tools, and reasoning.")
+    st.caption("Agentic Financial AI Assistant with planning, tools, and memory.")
     st.markdown(HERO_HTML, unsafe_allow_html=True)
     st.info(config.DISCLAIMER)
 
@@ -775,6 +911,10 @@ def main() -> None:
 
         st.caption(f"Tools available: {len(registry.get_tool_names())}")
         st.caption("Agentic mode: Plan → Execute → Synthesize")
+
+        st.divider()
+
+        _render_profile_editor()
 
         st.divider()
 
@@ -882,29 +1022,25 @@ def main() -> None:
             rate_limit.reset_user("default_user")
             st.rerun()
 
-    # Handle pending edit — prefill input box
-    # Streamlit chat_input does not support prefilled text.
-
     # Handle pending regenerate
     if st.session_state.pending_regenerate is not None:
         idx = st.session_state.pending_regenerate
         if 0 <= idx < len(st.session_state.messages):
-            # Find preceding user message
             if idx > 0 and st.session_state.messages[idx - 1]["role"] == "user":
                 user_prompt = st.session_state.messages[idx - 1]["content"]
-                # Remove assistant message + all after
                 del st.session_state.messages[idx:]
                 st.session_state.pending_regenerate = None
                 client = _get_client()
                 if client is not None:
-                    _process_user_turn(client, user_prompt)
+                    profile_ctx = st.session_state.user_profile.to_context_string()
+                    _process_user_turn(client, user_prompt, profile_ctx)
                 st.rerun()
 
-    # Render all messages
+    # Render messages
     for i, message in enumerate(st.session_state.messages):
         _render_message(message, i)
 
-    # Edit mode: if pending_edit, show "Cancel edit" button above input
+    # Edit mode notice
     if st.session_state.pending_edit is not None:
         col1, col2 = st.columns([3, 1])
         with col1:
@@ -914,13 +1050,10 @@ def main() -> None:
                 st.session_state.pending_edit = None
                 st.rerun()
 
-    prompt = st.chat_input(
-        "Ask a financial question (do not send card, CVV, OTP)...",
-    )
+    prompt = st.chat_input("Ask a financial question (do not send card, CVV, OTP)...")
     if not prompt:
         return
 
-    # If in edit mode, replace message and truncate
     if st.session_state.pending_edit is not None:
         idx = st.session_state.pending_edit
         if 0 <= idx < len(st.session_state.messages):
@@ -949,7 +1082,8 @@ def main() -> None:
         st.error("Missing NEBIUS_API_KEY in environment. Cannot call model.")
         return
 
-    _process_user_turn(client, prompt)
+    profile_ctx = st.session_state.user_profile.to_context_string()
+    _process_user_turn(client, prompt, profile_ctx)
 
 
 if __name__ == "__main__":
