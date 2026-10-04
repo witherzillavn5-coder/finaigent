@@ -6,9 +6,9 @@ import json
 import os
 import re
 import time
+from collections.abc import Iterator
 from datetime import datetime
 from pathlib import Path
-from typing import Any, cast
 
 import pandas as pd
 import streamlit as st
@@ -17,6 +17,7 @@ from openai import OpenAI
 
 import audit
 import config
+import document_parser
 import guardrail
 import rate_limit
 from agent.executor import execute_plan, format_execution_trace
@@ -34,31 +35,34 @@ HISTORY_LIMIT: int = 6
 ANSWER_MAX_CHARS: int = 500
 ANSWER_MAX_TOKENS: int = 350
 SYNTHESIS_MODEL: str = "qwen/qwen3.8-27b"
+MAX_DOC_CHARS: int = 8000
 
 SHORT_ANSWER_PROMPT = """You are FinGuard, a financial assistant.
 
-Answer the user's question based ONLY on the tool results below.
+Answer the user's question based ONLY on the tool results and document below.
 
 STRICT RULES — you MUST follow ALL:
 1. Output PLAIN TEXT. NO JSON. NO markdown tables.
 2. NEVER use TAB character.
 3. NEVER use pipe character (|).
-4. Maximum 80 words.
+4. Maximum 100 words.
 5. Line 1: 1 short conclusion sentence (no disclaimer).
 6. Then 3-4 bullet lines starting with "- ".
-7. Each bullet contains a concrete number.
+7. Each bullet contains a concrete number when possible.
 8. Last line: 1 short recommendation sentence.
 9. Do NOT repeat the question.
 10. Do NOT start with a disclaimer.
 11. Use the user's language (Vietnamese or English).
+12. If execution trace shows "✗ Failed" or no tool result, DO NOT invent numbers.
+13. If a document is provided, use its data for analysis.
 
-EXAMPLE OUTPUT (follow this format exactly):
+EXAMPLE OUTPUT:
 Với thu nhập 30 triệu/tháng, mua nhà 2 tỷ trong 5 năm là không khả thi.
 
-- Cần tiết kiệm 33.3 triệu/tháng, tức 111% thu nhập
-- Nếu tiết kiệm 15 triệu/tháng, 5 năm chỉ được 900 triệu
-- Vay 1.1 tỷ lãi 7%/năm trong 20 năm: trả góp 8.5 triệu/tháng
-- Tỷ lệ DTI sẽ vượt ngưỡng an toàn 40%
+- Cần tiết kiệm 29.4 triệu/tháng, tức 98% thu nhập
+- Chi phí sinh hoạt ước tính 17.5 triệu/tháng
+- Thu nhập khả dụng chỉ còn 12.5 triệu/tháng
+- Thiếu hụt 16.9 triệu/tháng so với mục tiêu
 
 Nên kéo dài thời gian hoặc tăng thu nhập trước khi quyết định.
 
@@ -85,6 +89,12 @@ def _init_state() -> None:
         st.session_state._should_rerun = False
     if "moderation_on" not in st.session_state:
         st.session_state.moderation_on = True
+    if "uploaded_doc_text" not in st.session_state:
+        st.session_state.uploaded_doc_text = None
+    if "uploaded_doc_name" not in st.session_state:
+        st.session_state.uploaded_doc_name = None
+    if "uploaded_doc_pages" not in st.session_state:
+        st.session_state.uploaded_doc_pages = 0
 
 
 def _get_client() -> OpenAI | None:
@@ -117,6 +127,7 @@ def _hard_sanitize(text: str, max_chars: int = ANSWER_MAX_CHARS) -> str:
 
     lines = text.split("\n")
     out: list[str] = []
+
     col_sep = re.compile(r"\t|\s{4,}|\s*\|\s*")
 
     for line in lines:
@@ -128,7 +139,7 @@ def _hard_sanitize(text: str, max_chars: int = ANSWER_MAX_CHARS) -> str:
         if re.match(r"^[\s\-=|_*.]+$", s):
             continue
 
-        parts = [part.strip() for part in col_sep.split(s) if part.strip()]
+        parts = [p.strip() for p in col_sep.split(s) if p.strip()]
         if len(parts) >= 3:
             out.append(f"- **{parts[0]}**: {' '.join(parts[1:])}")
             continue
@@ -136,7 +147,8 @@ def _hard_sanitize(text: str, max_chars: int = ANSWER_MAX_CHARS) -> str:
             out.append(f"- **{parts[0]}**: {parts[1]}")
             continue
 
-        out.append(re.sub(r"\s{2,}", " ", s))
+        clean_line = re.sub(r"\s{2,}", " ", s)
+        out.append(clean_line)
 
     text = "\n".join(out)
     text = re.sub(r"\n{3,}", "\n\n", text).strip()
@@ -161,14 +173,20 @@ def _generate_short_answer(
     client: OpenAI,
     user_query: str,
     trace_md: str,
+    document_text: str | None = None,
 ) -> str:
     """Single LLM call → plain text, sanitized, capped."""
+    doc_section = ""
+    if document_text:
+        doc_section = f"\n\nUPLOADED DOCUMENT (user-provided):\n{document_text}\n"
+
     messages = [
         {"role": "system", "content": SHORT_ANSWER_PROMPT},
         {
             "role": "user",
             "content": (
-                f"QUESTION: {user_query}\n\n"
+                f"QUESTION: {user_query}\n"
+                f"{doc_section}\n"
                 f"TOOL RESULTS:\n{trace_md}\n\n"
                 "Now write the short plain-text answer."
             ),
@@ -180,7 +198,7 @@ def _generate_short_answer(
             model=SYNTHESIS_MODEL,
             temperature=config.TEMPERATURE,
             max_tokens=ANSWER_MAX_TOKENS,
-            messages=cast(Any, messages),
+            messages=messages,
         )
         raw = response.choices[0].message.content or ""
         if not raw.strip():
@@ -191,7 +209,6 @@ def _generate_short_answer(
 
 
 def _build_fallback(trace_md: str) -> str:
-    """Fallback khi LLM fail — dùng trace trực tiếp."""
     cleaned = _hard_sanitize(trace_md, max_chars=ANSWER_MAX_CHARS)
     return cleaned or FALLBACK_REPLY
 
@@ -199,6 +216,7 @@ def _build_fallback(trace_md: str) -> str:
 def _call_llm_agentic(
     client: OpenAI,
     user_query: str,
+    document_text: str | None = None,
 ) -> tuple[str, str, list[str], str]:
     """Agentic: Plan → Execute → Short plain-text answer."""
     plan: ExecutionPlan = create_plan(client, user_query, config.MODEL_NAME)
@@ -211,7 +229,7 @@ def _call_llm_agentic(
         r.tool_name for r in exec_result.step_results if r.tool_name is not None
     ]
 
-    short_answer = _generate_short_answer(client, user_query, trace_md)
+    short_answer = _generate_short_answer(client, user_query, trace_md, document_text)
     return short_answer, trace_md, tools_used, plan_reasoning
 
 
@@ -254,7 +272,7 @@ Respond ONLY with JSON:
 
 def _show_error_card(title: str, description: str, hint: str = "") -> None:
     hint_html = (
-        f'<div style="margin-top: 8px; font-size: 0.85rem; opacity: 0.75;">{hint}</div>'
+        f'<div style="margin-top: 8px; font-size: 0.85rem; opacity: 0.75;">' f"{hint}</div>"
         if hint
         else ""
     )
@@ -330,11 +348,25 @@ def _record_stats() -> None:
     )
 
 
+def _stream_text(text: str, total_duration: float = 1.5) -> Iterator[str]:
+    """Yield text word-by-word for Claude-like streaming effect."""
+    words = text.split(" ")
+    if not words:
+        return
+    delay = total_duration / max(len(words), 1)
+    for i, word in enumerate(words):
+        yield word + (" " if i < len(words) - 1 else "")
+        time.sleep(delay)
+
+
 def _render_message(message: dict) -> None:
     with st.chat_message(message["role"]):
         tools_used = message.get("tools_used") or []
         if tools_used:
             _show_tools_badge(tools_used)
+
+        if message.get("doc_name"):
+            st.caption(f"Analyzed document: {message['doc_name']}")
 
         trace_md = message.get("trace_md")
         if trace_md:
@@ -452,7 +484,7 @@ HERO_HTML = """
         Secure Financial Intelligence
     </div>
     <div style="font-size: 0.88rem; opacity: 0.8;">
-        Agentic LLM with multi-step planning, financial tools, and 7 security layers.
+        Agentic LLM with multi-step planning, financial tools, document analysis, and 7 security layers.
     </div>
 </div>
 """
@@ -497,6 +529,45 @@ def main() -> None:
 
         st.caption(f"Tools available: {len(registry.get_tool_names())}")
         st.caption("Agentic mode: Plan → Execute → Synthesize")
+
+        st.divider()
+
+        # ---- Document Upload ----
+        st.subheader("Document Upload")
+        uploaded_file = st.file_uploader(
+            "Upload bank statement (PDF, TXT)",
+            type=["pdf", "txt"],
+            key="doc_uploader",
+            help="Max 20 pages, 50K chars. PII will be auto-masked.",
+        )
+
+        if uploaded_file is not None:
+            file_bytes = uploaded_file.read()
+            doc = document_parser.parse_document(file_bytes, uploaded_file.name)
+
+            if doc.success:
+                masked_text, pii_found = guardrail.mask_pii(doc.text)
+                st.session_state.uploaded_doc_text = masked_text
+                st.session_state.uploaded_doc_name = doc.filename
+                st.session_state.uploaded_doc_pages = doc.page_count
+
+                st.success(
+                    f"Loaded: {doc.filename} " f"({doc.page_count} pages, {doc.char_count} chars)"
+                )
+                if pii_found:
+                    st.warning(f"PII masked in document: {len(pii_found)} items")
+                    st.session_state.pii_redacted += len(pii_found)
+            else:
+                st.error(f"Failed: {doc.error}")
+                st.session_state.uploaded_doc_text = None
+
+        if st.session_state.get("uploaded_doc_text"):
+            st.caption(f"Active: {st.session_state.uploaded_doc_name}")
+            if st.button("Remove document", use_container_width=True):
+                st.session_state.uploaded_doc_text = None
+                st.session_state.uploaded_doc_name = None
+                st.session_state.uploaded_doc_pages = 0
+                st.rerun()
 
         st.divider()
 
@@ -627,6 +698,9 @@ def main() -> None:
     tools_used: list[str] = []
     trace_md = ""
     plan_reasoning = ""
+    doc_text = st.session_state.get("uploaded_doc_text")
+    doc_name = st.session_state.get("uploaded_doc_name")
+
     if client is None:
         raw_reply = "Missing NEBIUS_API_KEY in environment. Cannot call model."
         model_name = "none"
@@ -636,7 +710,9 @@ def main() -> None:
             status_placeholder.markdown(LOADING_HTML, unsafe_allow_html=True)
             with st.spinner("FinGuard is planning and executing..."):
                 raw_reply, trace_md, tools_used, plan_reasoning = _call_llm_agentic(
-                    client, result.processed_text
+                    client,
+                    result.processed_text,
+                    document_text=doc_text[:MAX_DOC_CHARS] if doc_text else None,
                 )
                 model_name = config.MODEL_NAME
             status_placeholder.empty()
@@ -700,10 +776,12 @@ def main() -> None:
     with st.chat_message("assistant"):
         if tools_used:
             _show_tools_badge(tools_used)
+        if doc_name:
+            st.caption(f"Analyzed: {doc_name}")
         if trace_md:
             with st.expander("Execution Trace", expanded=False):
                 st.markdown(trace_md)
-        st.markdown(display_text)
+        st.write_stream(_stream_text(display_text))
 
     st.session_state.messages.append(
         {
@@ -711,6 +789,7 @@ def main() -> None:
             "content": display_text,
             "tools_used": tools_used,
             "trace_md": trace_md,
+            "doc_name": doc_name if doc_text else None,
         }
     )
 
