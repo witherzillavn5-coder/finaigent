@@ -6,7 +6,7 @@ from typing import Any
 
 def _validate_finite(name: str, value: float) -> None:
     """Reject non-numeric or non-finite values."""
-    if isinstance(value, bool) or not isinstance(value, (int, float)):
+    if isinstance(value, bool) or not isinstance(value, int | float):
         raise ValueError(f"{name} must be a finite number.")
     if not math.isfinite(value):
         raise ValueError(f"{name} must be a finite number.")
@@ -411,6 +411,65 @@ def calculate_savings_future_value(
         "months": months,
         "total_contributed": total_contributed,
         "interest_earned": interest_earned,
+        "explanation": explanation,
+    }
+
+
+def convert_crypto(
+    amount: float,
+    from_coin: str,
+    to_currency: str = "USD",
+) -> dict[str, Any]:
+    """Convert crypto amount using static reference prices (not real-time).
+
+    Supported coins: BTC, ETH, USDT, BNB, SOL.
+    Supported currencies: USD, VND.
+    """
+    _validate_finite("amount", amount)
+    if amount <= 0:
+        raise ValueError("amount must be positive.")
+
+    crypto_prices_usd = {
+        "BTC": 95000.0,
+        "ETH": 3500.0,
+        "USDT": 1.0,
+        "BNB": 650.0,
+        "SOL": 180.0,
+    }
+    currency_rates = {
+        "USD": 1.0,
+        "VND": 24500.0,
+    }
+
+    coin = from_coin.upper().strip()
+    currency = to_currency.upper().strip()
+
+    if coin not in crypto_prices_usd:
+        raise ValueError(
+            f"Unsupported coin: {from_coin}. Supported: {', '.join(crypto_prices_usd.keys())}"
+        )
+    if currency not in currency_rates:
+        raise ValueError(
+            f"Unsupported currency: {to_currency}. Supported: {', '.join(currency_rates.keys())}"
+        )
+
+    price_usd = crypto_prices_usd[coin]
+    rate = currency_rates[currency]
+    converted = amount * price_usd * rate
+
+    explanation = (
+        f"{amount} {coin} = {converted:,.0f} {currency}. "
+        f"Reference price: 1 {coin} = {price_usd:,.0f} USD. "
+        f"NOTE: This uses static reference prices, NOT real-time data. "
+        f"Always verify on a trusted exchange before transacting."
+    )
+
+    return {
+        "converted_amount": converted,
+        "from_coin": coin,
+        "to_currency": currency,
+        "reference_price_usd": price_usd,
+        "is_real_time": False,
         "explanation": explanation,
     }
 

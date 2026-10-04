@@ -111,6 +111,19 @@ def test_convert_same_currency() -> None:
     assert result["converted_amount"] == pytest.approx(100, rel=0.01)
 
 
+def test_convert_crypto_to_vnd() -> None:
+    """Convert Bitcoin to Vietnamese dong using the static reference price."""
+    result = fc.convert_crypto(1, "BTC", "VND")
+    assert result["converted_amount"] == pytest.approx(2_327_500_000)
+    assert result["is_real_time"] is False
+
+
+def test_convert_crypto_rejects_unsupported_coin() -> None:
+    """Reject coins without a static reference price."""
+    with pytest.raises(ValueError, match="Unsupported coin"):
+        fc.convert_crypto(1, "DOGE")
+
+
 def test_budget_basic() -> None:
     """Calculate remaining income after expenses."""
     result = fc.analyze_budget(20_000_000, {"rent": 5_000_000, "food": 3_000_000})
@@ -140,8 +153,8 @@ def test_budget_zero_income() -> None:
 
 
 def test_registry_has_5_tools() -> None:
-    """Register all five financial calculators."""
-    assert len(registry.get_tool_names()) == 5
+    """Register all eight financial calculators."""
+    assert len(registry.get_tool_names()) == 8
 
 
 def test_get_tool_schemas_format() -> None:
@@ -149,6 +162,7 @@ def test_get_tool_schemas_format() -> None:
     schemas = registry.get_tool_schemas()
     assert all(schema["type"] == "function" for schema in schemas)
     assert all(isinstance(schema["function"], dict) for schema in schemas)
+    assert any(schema["function"]["name"] == "convert_crypto" for schema in schemas)
 
 
 def test_execute_tool_valid() -> None:

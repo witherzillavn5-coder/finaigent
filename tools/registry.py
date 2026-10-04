@@ -15,6 +15,7 @@ from tools.financial_calculators import (
     calculate_required_monthly_savings,
     calculate_savings_future_value,
     calculate_savings_goal,
+    convert_crypto,
     convert_currency,
 )
 
@@ -27,6 +28,7 @@ TOOL_FUNCTIONS = {
     "calculate_required_monthly_savings": calculate_required_monthly_savings,
     "calculate_savings_future_value": calculate_savings_future_value,
     "calculate_savings_goal": calculate_savings_goal,
+    "convert_crypto": convert_crypto,
     "convert_currency": convert_currency,
 }
 
@@ -166,6 +168,35 @@ def get_tool_schemas() -> list[dict[str, Any]]:
                         },
                     },
                     "required": ["amount", "from_currency", "to_currency"],
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "convert_crypto",
+                "description": (
+                    "Convert a crypto amount (BTC, ETH, USDT, BNB, SOL) to USD or VND. "
+                    "Uses STATIC reference prices (not real-time). "
+                    "Use for questions like 'how much is 1 BTC in VND?'."
+                ),
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "amount": {
+                            "type": "number",
+                            "description": "Amount of crypto to convert",
+                        },
+                        "from_coin": {
+                            "type": "string",
+                            "description": "Source coin: BTC, ETH, USDT, BNB, SOL",
+                        },
+                        "to_currency": {
+                            "type": "string",
+                            "description": "Target currency: USD or VND. Defaults to USD.",
+                        },
+                    },
+                    "required": ["amount", "from_coin"],
                 },
             },
         },

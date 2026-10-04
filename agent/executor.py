@@ -3,14 +3,12 @@
 from __future__ import annotations
 
 import inspect
-from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
 from agent.planner import ExecutionPlan, PlanStep
 from tools import registry
 
-# Map sai tên tham số → tên đúng cho từng tool
 PARAM_ALIASES: dict[str, dict[str, str]] = {
     "calculate_compound_interest": {
         "rate": "annual_rate_percent",
@@ -39,6 +37,21 @@ PARAM_ALIASES: dict[str, dict[str, str]] = {
         "interest_rate": "annual_rate_percent",
         "annual_interest_rate": "annual_rate_percent",
     },
+    "calculate_required_monthly_savings": {
+        "target": "target_amount",
+        "goal_amount": "target_amount",
+        "rate": "annual_rate_percent",
+        "interest_rate": "annual_rate_percent",
+        "annual_interest_rate": "annual_rate_percent",
+    },
+    "calculate_savings_future_value": {
+        "monthly": "monthly_savings",
+        "monthly_amount": "monthly_savings",
+        "monthly_contribution": "monthly_savings",
+        "rate": "annual_rate_percent",
+        "interest_rate": "annual_rate_percent",
+        "annual_interest_rate": "annual_rate_percent",
+    },
     "convert_currency": {
         "value": "amount",
         "from": "from_currency",
@@ -54,8 +67,6 @@ PARAM_ALIASES: dict[str, dict[str, str]] = {
 
 @dataclass
 class StepResult:
-    """Result of executing one plan step."""
-
     step_id: int
     description: str
     tool_name: str | None
@@ -67,8 +78,6 @@ class StepResult:
 
 @dataclass
 class ExecutionResult:
-    """Result of executing an entire plan."""
-
     plan: ExecutionPlan
     step_results: list[StepResult] = field(default_factory=list)
     all_succeeded: bool = False
@@ -78,26 +87,22 @@ class ExecutionResult:
 
 def _normalize_args(tool_name: str, args: dict[str, Any]) -> dict[str, Any]:
     """Đổi tên tham số sai thành đúng + DROP tham số không hợp lệ."""
-    func: Callable[..., Any] | None = registry.TOOL_FUNCTIONS.get(tool_name)
+    func = registry.TOOL_FUNCTIONS.get(tool_name)
     if func is None:
         return args
 
-    # 1. Áp dụng alias mapping
     aliases = PARAM_ALIASES.get(tool_name, {})
     renamed: dict[str, Any] = {}
     for key, value in args.items():
         new_key = aliases.get(key, key)
         renamed[new_key] = value
 
-    # 2. Filter theo signature thật của tool
     try:
         sig = inspect.signature(func)
         valid_params = set(sig.parameters.keys())
-        # Lấy cả positional-or-keyword lẫn keyword-only
         filtered = {k: v for k, v in renamed.items() if k in valid_params}
         return filtered
     except (ValueError, TypeError):
-        # Nếu không inspect được (vd: builtin), trả về renamed
         return renamed
 
 
@@ -105,7 +110,6 @@ def _resolve_dependencies(
     step: PlanStep,
     completed: dict[int, StepResult],
 ) -> dict[str, Any]:
-    """Merge tool_output của các step phụ thuộc vào args của step hiện tại."""
     args = dict(step.tool_args)
 
     if step.tool_name is None:
@@ -124,7 +128,6 @@ def _resolve_dependencies(
 
 
 def execute_plan(plan: ExecutionPlan) -> ExecutionResult:
-    """Execute all steps in a plan in order."""
     result = ExecutionResult(plan=plan)
     completed: dict[int, StepResult] = {}
 
@@ -146,7 +149,6 @@ def _execute_step(
     step: PlanStep,
     completed: dict[int, StepResult],
 ) -> StepResult:
-    """Execute a single step."""
     if step.tool_name is None:
         return StepResult(
             step_id=step.step_id,
@@ -198,7 +200,6 @@ def _execute_step(
 
 
 def format_execution_trace(result: ExecutionResult) -> str:
-    """Format execution result as markdown trace."""
     lines: list[str] = []
     tool_count = sum(1 for r in result.step_results if r.tool_name is not None)
 
@@ -225,6 +226,15 @@ def format_execution_trace(result: ExecutionResult) -> str:
     return "\n".join(lines)
 
 
+def format_failures_for_replan(result: ExecutionResult) -> str:
+    """Format failed steps as context for LLM re-planning."""
+    failures: list[str] = []
+    for sr in result.step_results:
+        if not sr.success and sr.tool_name:
+            failures.append(f"- Step {sr.step_id} ({sr.tool_name}) failed with error: {sr.error}")
+    return "\n".join(failures)
+
+
 if __name__ == "__main__":
     from agent.planner import ExecutionPlan, PlanStep
 
@@ -234,20 +244,10 @@ if __name__ == "__main__":
         steps=[
             PlanStep(
                 step_id=1,
-                description="Analyze budget",
-                tool_name="analyze_budget",
-                tool_args={
-                    "monthly_income": 30000000,
-                    "expenses": {"rent": 8000000, "food": 4000000},
-                },
-                depends_on=[],
-            ),
-            PlanStep(
-                step_id=2,
-                description="Calculate loan payment",
+                description="Calculate loan",
                 tool_name="calculate_loan_payment",
                 tool_args={
-                    "principal": 1000000000,
+                    "principal": 500000000,
                     "annual_rate_percent": 8,
                     "years": 5,
                 },
@@ -258,4 +258,4 @@ if __name__ == "__main__":
 
     result = execute_plan(demo_plan)
     print(format_execution_trace(result))
-    print(f"\nTotal: {result.total_steps}, Failed: {result.failed_steps}")
+    print(f"\nFailed: {result.failed_steps}")

@@ -41,6 +41,7 @@ CRITICAL RULES FOR tool_args:
    - "How long to reach X by saving Y/month?" → calculate_savings_goal
    - "Compound interest on X for Y years at Z%" → calculate_compound_interest
    - "Convert X USD to VND" → convert_currency
+    - "How much is X BTC/ETH in VND/USD?" → convert_crypto(from_coin=X, amount=Y)
    - "Analyze budget with income and expenses" → analyze_budget
 
 5. Use depends_on to chain steps (e.g., step 2 needs result of step 1).
@@ -129,6 +130,7 @@ def _parse_plan(content: str) -> ExecutionPlan:
         "calculate_required_monthly_savings",
         "calculate_savings_future_value",
         "calculate_savings_goal",
+        "convert_crypto",
         "convert_currency",
     }
     steps: list[PlanStep] = []
@@ -180,8 +182,7 @@ def _extract_json(text: str) -> str:
         first_nl = text.find("\n")
         if first_nl > 0:
             text = text[first_nl + 1 :]
-        if text.endswith("```"):
-            text = text[:-3]
+        text = text.removesuffix("```")
         text = text.strip()
 
     if text.startswith("{") and text.endswith("}"):
@@ -256,3 +257,100 @@ def create_plan(
         return _parse_plan(cleaned)
     except (json.JSONDecodeError, ValueError, TypeError):
         return _fallback_plan()
+
+
+def replan_with_failures(
+    client: OpenAI,
+    user_query: str,
+    original_plan: ExecutionPlan,
+    failure_context: str,
+    model: str,
+) -> ExecutionPlan:
+    """Ask LLM to fix a plan that had failed steps.
+
+    Provides the original plan + failure errors + original user query
+    so LLM can correct parameter names/values.
+    """
+    from tools import registry
+
+    tools_schema = registry.get_tool_schemas()
+
+    tool_lines = []
+    for tool in tools_schema:
+        function = tool.get("function", {})
+        name = function.get("name", "")
+        params = function.get("parameters", {}).get("properties", {})
+        required = function.get("parameters", {}).get("required", [])
+        param_strs = []
+        for param_name, param_info in params.items():
+            req_marker = "*" if param_name in required else ""
+            param_type = param_info.get("type", "any")
+            param_strs.append(f"{param_name}{req_marker}:{param_type}")
+        tool_lines.append(f"- {name}({', '.join(param_strs)})")
+    tools_reference = "\n".join(tool_lines)
+
+    original_steps = []
+    for s in original_plan.steps:
+        original_steps.append(f"  step_id={s.step_id}, tool={s.tool_name}, args={s.tool_args}")
+    original_plan_str = "\n".join(original_steps)
+
+    replan_prompt = f"""You are a financial question planner. A previous plan FAILED.
+
+USER QUESTION:
+{user_query}
+
+ORIGINAL PLAN:
+{original_plan_str}
+
+FAILURES:
+{failure_context}
+
+TOOLS AVAILABLE (use EXACT parameter names):
+{tools_reference}
+
+Your task: Create a CORRECTED plan that fixes the errors above.
+
+CRITICAL RULES:
+1. Use EXACT parameter names from the tool schemas.
+2. If a tool requires a parameter that user did not provide, ESTIMATE it
+   and note the estimate in description.
+3. Do NOT use a tool if you cannot provide required params.
+4. If the request is fundamentally impossible to compute, return a
+   single reasoning-only step (tool_name=null) that explains why.
+
+Return ONLY valid JSON:
+{{
+  "reasoning": "What was wrong and how this fixes it",
+  "complexity": "simple" | "moderate" | "complex",
+  "steps": [
+    {{
+      "step_id": 1,
+      "description": "...",
+      "tool_name": "..." or null,
+      "tool_args": {{}},
+      "depends_on": []
+    }}
+  ]
+}}
+"""
+
+    messages = [
+        {"role": "system", "content": replan_prompt},
+        {"role": "user", "content": "Produce the corrected plan now."},
+    ]
+
+    try:
+        response = client.chat.completions.create(
+            model=model,
+            messages=messages,
+            tools=[],
+            response_format={"type": "json_object"},
+        )
+        content = response.choices[0].message.content
+        if not content:
+            return original_plan
+
+        cleaned = _extract_json(content)
+        return _parse_plan(cleaned)
+    except Exception:
+        return original_plan
