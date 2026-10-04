@@ -14,6 +14,10 @@ import re
 import unicodedata
 from dataclasses import dataclass, field
 
+from openai import OpenAI
+
+import config
+
 # --- Presidio optional import ---
 try:
     from presidio_analyzer import AnalyzerEngine, Pattern, PatternRecognizer
@@ -348,7 +352,10 @@ class GuardrailResult:
 # ============================================================
 
 
-def process_input(text: str) -> GuardrailResult:
+def process_input(
+    text: str,
+    client: OpenAI | None = None,
+) -> GuardrailResult:
     """normalize → injection → compliance → PII."""
     if not text or not text.strip():
         return GuardrailResult(allowed=False, layer="input", reason="empty input")
@@ -365,6 +372,19 @@ def process_input(text: str) -> GuardrailResult:
             processed_text=normalized,
             findings=["prompt_injection"],
         )
+
+    # Semantic check (2nd layer) — only if client provided
+    if client is not None:
+        sem_inj, sem_score, sem_reason = detect_injection_semantic(client, normalized)
+        if sem_inj:
+            return GuardrailResult(
+                allowed=False,
+                layer="injection-semantic",
+                reason=sem_reason,
+                risk_score=sem_score,
+                processed_text=normalized,
+                findings=["prompt_injection_semantic"],
+            )
 
     is_comp, comp_score, comp_reason = check_financial_compliance(normalized)
     if is_comp:
@@ -431,3 +451,52 @@ def check_output(text: str) -> GuardrailResult:
 def process_output(text: str) -> GuardrailResult:
     """Wrapper cho check_output."""
     return check_output(text)
+
+
+def detect_injection_semantic(
+    client: OpenAI,
+    text: str,
+    threshold: float = config.SEMANTIC_INJECTION_THRESHOLD,
+) -> tuple[bool, float, str]:
+    """Detect injection using Groq prompt-guard-2-86m semantic classifier.
+
+    Complements regex detection by catching paraphrased/obfuscated injections.
+    Returns (is_injection, score, reason).
+    """
+    if not text or not text.strip():
+        return False, 0.0, ""
+
+    try:
+        response = client.chat.completions.create(
+            model=config.PROMPT_GUARD_MODEL,
+            messages=[{"role": "user", "content": text[:2000]}],
+            temperature=0.0,
+            max_tokens=80,
+        )
+        content = response.choices[0].message.content or "{}"
+        import json as _json
+
+        try:
+            data = _json.loads(content.strip())
+        except _json.JSONDecodeError:
+            try:
+                score = float(content.strip())
+            except ValueError:
+                return False, 0.0, ""
+            is_inj = score >= threshold
+        else:
+            if isinstance(data, dict):
+                score = float(data.get("score", 0.0))
+                is_inj = bool(data.get("is_injection", False)) and score >= threshold
+            elif isinstance(data, float | int):
+                score = float(data)
+                is_inj = score >= threshold
+            else:
+                return False, 0.0, ""
+
+        reason = f"semantic score={score:.2f}" if is_inj else ""
+        return is_inj, score, reason
+
+    except Exception:
+        # Fail-open if the API is unavailable.
+        return False, 0.0, ""

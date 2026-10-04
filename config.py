@@ -75,3 +75,7 @@ SECURITY AND FINANCIAL SAFETY:
 """
 
 REASONING_ENABLED = True
+
+# Semantic injection detection (Groq prompt-guard model)
+PROMPT_GUARD_MODEL = "meta-llama/llama-prompt-guard-2-86m"
+SEMANTIC_INJECTION_THRESHOLD = 0.75

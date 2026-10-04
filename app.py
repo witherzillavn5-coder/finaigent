@@ -582,7 +582,7 @@ def _process_user_turn(
         }
     )
 
-    result = guardrail.process_input(prompt)
+    result = guardrail.process_input(prompt, client=client)
 
     if not result.allowed:
         st.session_state.attacks_blocked += 1
