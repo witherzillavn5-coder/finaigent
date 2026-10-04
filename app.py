@@ -15,6 +15,7 @@ import pandas as pd
 import streamlit as st
 from dotenv import load_dotenv
 from openai import OpenAI
+from streamlit_mic_recorder import mic_recorder
 
 import audit
 import config
@@ -25,7 +26,9 @@ import rate_limit
 from agent.debate import format_debate_trace, run_debate
 from agent.executor import execute_plan, format_execution_trace
 from agent.planner import ExecutionPlan, create_plan
+from export_pdf import build_conversation_pdf
 from tools import registry
+from voice_input import transcribe_audio
 
 load_dotenv()
 
@@ -97,6 +100,10 @@ def _init_state() -> None:
         st.session_state.moderation_on = True
     if "debate_on" not in st.session_state:
         st.session_state.debate_on = config.DEBATE_ENABLED_DEFAULT
+    if "voice_on" not in st.session_state:
+        st.session_state.voice_on = config.VOICE_ENABLED_DEFAULT
+    if "voice_transcript" not in st.session_state:
+        st.session_state.voice_transcript = None
     if "uploaded_docs" not in st.session_state:
         st.session_state.uploaded_docs = []
     if "uploader_key" not in st.session_state:
@@ -1009,6 +1016,41 @@ def main() -> None:
         )
 
         st.divider()
+        st.toggle(
+            "Voice Input",
+            key="voice_on",
+            help="Use microphone instead of typing. Powered by Groq Whisper.",
+        )
+
+        if st.session_state.voice_on:
+            audio = mic_recorder(
+                start_prompt="Record",
+                stop_prompt="Stop",
+                just_once=True,
+                use_container_width=True,
+                key="voice_recorder",
+            )
+            if audio and audio.get("bytes"):
+                with st.spinner("Transcribing..."):
+                    voice_client = _get_client()
+                    if voice_client is not None:
+                        result = transcribe_audio(
+                            voice_client,
+                            audio["bytes"],
+                            filename=f"audio.{audio.get('format', 'webm')}",
+                            language=config.VOICE_LANGUAGE,
+                        )
+                        if result.success:
+                            st.session_state.voice_transcript = result.text
+                            st.success(f"Transcribed ({result.language}): {result.text[:60]}...")
+                            st.rerun()
+                        else:
+                            st.error(f"Voice: {result.error}")
+
+            if st.session_state.voice_transcript:
+                st.caption(f"Ready: {st.session_state.voice_transcript[:80]}")
+
+        st.divider()
 
         audit_path = Path("logs/audit_chain.jsonl")
         if audit_path.exists() and audit_path.stat().st_size > 0:
@@ -1024,6 +1066,25 @@ def main() -> None:
             st.caption(f"Log has {len(audit_content.splitlines())} lines")
         else:
             st.caption("No logs yet")
+
+        if st.session_state.messages:
+            try:
+                pdf_bytes = build_conversation_pdf(
+                    st.session_state.messages,
+                    title="FinGuard Agent Conversation",
+                )
+                st.download_button(
+                    label="Download Conversation PDF",
+                    data=pdf_bytes,
+                    file_name=(f"finguard_chat_{datetime.now().strftime('%Y%m%d_%H%M')}.pdf"),
+                    mime="application/pdf",
+                    use_container_width=True,
+                )
+                st.caption(f"Export {len(st.session_state.messages)} messages")
+            except Exception as exc:
+                st.caption(f"PDF export unavailable: {exc}")
+        else:
+            st.caption("No messages to export")
 
         if st.button("Verify Log Integrity", use_container_width=True):
             is_valid, total, msg = audit.verify_chain()
@@ -1070,6 +1131,12 @@ def main() -> None:
                 st.rerun()
 
     prompt = st.chat_input("Ask a financial question (do not send card, CVV, OTP)...")
+
+    # Fallback to voice transcript if chat_input is empty.
+    if not prompt and st.session_state.get("voice_transcript"):
+        prompt = st.session_state.voice_transcript
+        st.session_state.voice_transcript = None
+
     if not prompt:
         return
 

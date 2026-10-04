@@ -83,3 +83,7 @@ SEMANTIC_INJECTION_THRESHOLD = 0.75
 # Multi-agent debate
 DEBATE_ENABLED_DEFAULT = True
 DEBATE_TRIGGER_COMPLEXITY = {"moderate", "complex"}
+
+# Voice input
+VOICE_ENABLED_DEFAULT = True
+VOICE_LANGUAGE = "en"  # Auto-detect; set to "vi" or "en" to force
