@@ -45,11 +45,20 @@ def normalize_text(text: str) -> str:
     return text.strip()
 
 
+def _strip_vietnamese_diacritics(text: str) -> str:
+    decomposed = unicodedata.normalize("NFD", text)
+    unaccented = "".join(
+        character for character in decomposed if not unicodedata.combining(character)
+    )
+    return unaccented.replace("đ", "d").replace("Đ", "D")
+
+
 # ============================================================
 # LỚP 1 — INJECTION DETECTOR
 # ============================================================
 
 _HARD_PATTERNS_RAW = [
+    # English patterns
     r"ignore\s+(all\s+)?(previous|prior|above)\s*instructions?",
     r"forget\s+(all\s+)?(previous|prior|your)\s+(instructions?|rules?)",
     r"you\s+are\s+now\s+(an?\s+)?(unrestricted|unfiltered|jailbroken)",
@@ -57,11 +66,24 @@ _HARD_PATTERNS_RAW = [
     r"reveal\s+(your\s+)?(system\s+)?prompt",
     r"override\s+(the\s+)?(safety|guardrail|security|rules?)",
     r"(disable|bypass)\s+(your\s+)?(safety|filter|guardrail|restrictions?)",
-    r"bỏ\s+qua\s+(mọi\s+)?(hướng\s+dẫn|quy\s+tắc|chỉ\s+thị)",
     r"system\s+prompt\s+(leak|reveal|show)",
+    r"set\s+aside\s+(all\s+)?(earlier|previous|prior)\s+(directives?|instructions?|rules?)",
+    r"pretend\s+(you\s+are|to\s+be)\s+(not\s+)?(an?\s+)?(ai|assistant|bot)",
+    # Vietnamese patterns
+    r"bỏ\s+qua\s+(mọi|tất\s+cả|các)?\s*(hướng\s+dẫn|quy\s+tắc|chỉ\s+thị|lệnh)",
+    r"quên\s+(hết|mọi|tất\s+cả)\s+(các\s+)?(hướng\s+dẫn|quy\s+tắc|lệnh)",
+    r"quên\s+đi\s+(mọi|tất\s+cả)?\s*(các\s+)?(hướng\s+dẫn|quy\s+tắc)",
+    r"tiết\s+lộ\s+(system\s*prompt|hướng\s+dẫn\s+hệ\s+thống|cấu\s+hình)",
+    r"cho\s+tôi\s+xem\s+(system\s*prompt|hướng\s+dẫn\s+hệ\s+thống)",
+    r"đóng\s+vai\s+(không\s+giới\s+hạn|không\s+kiểm\s+duyệt|tự\s+do)",
+    r"vượt\s+qua\s+(bảo\s+mật|kiểm\s+duyệt|guardrail|an\s+toàn)",
+    r"tắt\s+(bảo\s+mật|kiểm\s+duyệt|filter)",
+    r"giả\s+vờ\s+(bạn\s+)?(là|không\s+phải)\s+(AI|trợ\s+lý|bot)",
+    r"(jailbreak|dan\s*mode)\s*bằng\s+tiếng\s+việt",
 ]
 
 _SOFT_PATTERNS_RAW = [
+    # English patterns
     r"\bact\s+as\b",
     r"\brole[\s-]?play\b",
     r"\bhypothetical(ly)?\b",
@@ -69,10 +91,20 @@ _SOFT_PATTERNS_RAW = [
     r"\bunrestricted\b",
     r"\bwithout\s+(any\s+)?restrictions?\b",
     r"\bno\s+limitations?\b",
+    # Vietnamese patterns
+    r"đóng\s+vai",
+    r"giả\s+sử",
+    r"hãy\s+tưởng\s+tượng",
+    r"không\s+có\s+giới\s+hạn",
+    r"không\s+bị\s+kiểm\s+duyệt",
 ]
 
-HARD_INJECTION_PATTERNS = [re.compile(p, re.I) for p in _HARD_PATTERNS_RAW]
-SOFT_INJECTION_PATTERNS = [re.compile(p, re.I) for p in _SOFT_PATTERNS_RAW]
+HARD_INJECTION_PATTERNS = [
+    re.compile(_strip_vietnamese_diacritics(pattern), re.I) for pattern in _HARD_PATTERNS_RAW
+]
+SOFT_INJECTION_PATTERNS = [
+    re.compile(_strip_vietnamese_diacritics(pattern), re.I) for pattern in _SOFT_PATTERNS_RAW
+]
 
 
 def detect_prompt_injection(text: str) -> tuple[bool, float, str]:
@@ -80,7 +112,7 @@ def detect_prompt_injection(text: str) -> tuple[bool, float, str]:
     if not text:
         return False, 0.0, ""
 
-    normalized = normalize_text(text)
+    normalized = _strip_vietnamese_diacritics(normalize_text(text))
 
     for pattern in HARD_INJECTION_PATTERNS:
         if pattern.search(normalized):
@@ -456,11 +488,13 @@ def process_output(text: str) -> GuardrailResult:
 def detect_injection_semantic(
     client: OpenAI,
     text: str,
-    threshold: float = config.SEMANTIC_INJECTION_THRESHOLD,
+    threshold: float = 0.75,
 ) -> tuple[bool, float, str]:
     """Detect injection using Groq prompt-guard-2-86m semantic classifier.
 
-    Complements regex detection by catching paraphrased/obfuscated injections.
+    Model returns a single float score (0.0-1.0) as string.
+    Score >= threshold -> injection detected.
+
     Returns (is_injection, score, reason).
     """
     if not text or not text.strip():
@@ -471,32 +505,30 @@ def detect_injection_semantic(
             model=config.PROMPT_GUARD_MODEL,
             messages=[{"role": "user", "content": text[:2000]}],
             temperature=0.0,
-            max_tokens=80,
+            max_tokens=20,
         )
-        content = response.choices[0].message.content or "{}"
-        import json as _json
+        content = (response.choices[0].message.content or "").strip()
+
+        if not content:
+            return False, 0.0, ""
 
         try:
-            data = _json.loads(content.strip())
-        except _json.JSONDecodeError:
+            score = float(content)
+        except ValueError:
             try:
-                score = float(content.strip())
+                match = re.search(r"0?\.\d+|\d+\.?\d*", content)
+                if not match:
+                    return False, 0.0, ""
+                score = float(match.group(0))
             except ValueError:
                 return False, 0.0, ""
-            is_inj = score >= threshold
-        else:
-            if isinstance(data, dict):
-                score = float(data.get("score", 0.0))
-                is_inj = bool(data.get("is_injection", False)) and score >= threshold
-            elif isinstance(data, float | int):
-                score = float(data)
-                is_inj = score >= threshold
-            else:
-                return False, 0.0, ""
 
-        reason = f"semantic score={score:.2f}" if is_inj else ""
+        score = max(0.0, min(1.0, score))
+        is_inj = score >= threshold
+
+        reason = f"semantic score={score:.3f}" if is_inj else ""
         return is_inj, score, reason
 
     except Exception:
-        # Fail-open if the API is unavailable.
+        # Fail-open on API errors (rate limit, network) — regex layer still active.
         return False, 0.0, ""
