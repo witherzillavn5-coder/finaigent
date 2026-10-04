@@ -13,19 +13,21 @@ from tools.financial_calculators import (
     calculate_compound_interest,
     calculate_loan_payment,
     calculate_required_monthly_savings,
+    calculate_savings_future_value,
     calculate_savings_goal,
     convert_currency,
 )
 
 ToolFunction = Callable[..., dict[str, Any]]
 
-TOOL_FUNCTIONS: dict[str, ToolFunction] = {
+TOOL_FUNCTIONS = {
+    "analyze_budget": analyze_budget,
     "calculate_compound_interest": calculate_compound_interest,
     "calculate_loan_payment": calculate_loan_payment,
     "calculate_required_monthly_savings": calculate_required_monthly_savings,
+    "calculate_savings_future_value": calculate_savings_future_value,
     "calculate_savings_goal": calculate_savings_goal,
     "convert_currency": convert_currency,
-    "analyze_budget": analyze_budget,
 }
 
 
@@ -35,30 +37,29 @@ def get_tool_schemas() -> list[dict[str, Any]]:
         {
             "type": "function",
             "function": {
-                "name": "calculate_compound_interest",
-                "description": "Calculate compound growth and interest earned on a VND principal.",
+                "name": "calculate_savings_future_value",
+                "description": (
+                    "Calculate future value when saving a fixed amount per month "
+                    "for N years at a given annual interest rate. Use this for "
+                    "'how much will I have after saving X/month for Y years?'"
+                ),
                 "parameters": {
                     "type": "object",
                     "properties": {
-                        "principal": {
+                        "monthly_savings": {
                             "type": "number",
-                            "description": "Principal amount in VND",
-                        },
-                        "annual_rate_percent": {
-                            "type": "number",
-                            "description": "Annual interest rate as percentage (e.g., 8 for 8%)",
+                            "description": "Amount saved per month",
                         },
                         "years": {
                             "type": "number",
-                            "description": "Investment duration in years",
+                            "description": "Number of years",
                         },
-                        "compounds_per_year": {
-                            "type": "integer",
-                            "description": "Number of compounding periods per year",
-                            "default": 12,
+                        "annual_rate_percent": {
+                            "type": "number",
+                            "description": "Annual interest rate as percent (e.g., 6 for 6%). Defaults to 0.",
                         },
                     },
-                    "required": ["principal", "annual_rate_percent", "years"],
+                    "required": ["monthly_savings", "years"],
                 },
             },
         },
@@ -203,7 +204,7 @@ def execute_tool(name: str, arguments: dict[str, Any]) -> dict[str, Any]:
         return {"error": f"Unknown tool: {name}"}
 
     try:
-        result = function(**arguments)
+        result = function(**arguments)  # type: ignore[operator]
     except ValueError as error:
         return {"error": str(error)}
     except Exception as error:

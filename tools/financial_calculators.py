@@ -366,6 +366,55 @@ def calculate_required_monthly_savings(
     }
 
 
+def calculate_savings_future_value(
+    monthly_savings: float,
+    years: float,
+    annual_rate_percent: float = 0,
+) -> dict[str, Any]:
+    """Calculate future value of recurring monthly savings (annuity).
+
+    Inverse of calculate_required_monthly_savings: given monthly PMT,
+    computes the future value after N years at a given rate.
+    """
+    _validate_finite("monthly_savings", monthly_savings)
+    _validate_finite("years", years)
+    _validate_finite("annual_rate_percent", annual_rate_percent)
+
+    if monthly_savings <= 0:
+        raise ValueError("monthly_savings must be positive.")
+    if years <= 0:
+        raise ValueError("years must be positive.")
+    if annual_rate_percent < 0:
+        raise ValueError("annual_rate_percent cannot be negative.")
+
+    months = int(years * 12)
+    r = annual_rate_percent / 12 / 100
+
+    if r == 0:
+        future_value = monthly_savings * months
+    else:
+        future_value = monthly_savings * (((1 + r) ** months - 1) / r)
+
+    total_contributed = monthly_savings * months
+    interest_earned = future_value - total_contributed
+
+    explanation = (
+        f"Saving {_format_vnd(monthly_savings)} per month for {months} months "
+        f"({years} years) at {annual_rate_percent}% annual rate yields "
+        f"{_format_vnd(future_value)}. Total contributed: "
+        f"{_format_vnd(total_contributed)}; interest earned: "
+        f"{_format_vnd(interest_earned)}."
+    )
+
+    return {
+        "future_value": future_value,
+        "months": months,
+        "total_contributed": total_contributed,
+        "interest_earned": interest_earned,
+        "explanation": explanation,
+    }
+
+
 if __name__ == "__main__":
     demos = (
         calculate_compound_interest(10_000_000, 8, 2),

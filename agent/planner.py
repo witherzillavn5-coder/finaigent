@@ -26,17 +26,17 @@ CRITICAL RULES FOR tool_args:
 2. ALWAYS ESTIMATE missing values. NEVER leave required params empty.
    If the user does not provide a value, estimate a reasonable one and note it in the description.
 
-   Example: User says "lương 30 triệu" (income = 30M) but does not mention expenses.
+   Example: User says "luong 30 trieu" (income = 30M) but does not mention expenses.
    → You MUST still provide expenses. Estimate based on Vietnamese context:
-     expenses = {"rent": 8000000, "food": 4000000, "transport": 2000000, "utilities": 1500000}
+     expenses = {{"rent": 8000000, "food": 4000000, "transport": 2000000, "utilities": 1500000}}
      And write in description: "using estimated monthly expenses of ~15M VND"
 
-3. NEVER call a tool with empty tool_args {} if the tool has required params.
+3. NEVER call a tool with empty tool_args {{}} if the tool has required params.
    If you cannot estimate a required value → do NOT call the tool, use a reasoning step instead.
 
 4. PREFER these tools for common question patterns:
-   - "Save X in Y years → how much per month?" → calculate_required_monthly_savings(target_amount=X, years=Y)
-   - "How much will I have after saving X/month for Y years?" → calculate_savings_goal
+   - "How much will I have after saving X/month for Y years?" → calculate_savings_future_value(monthly_savings=X, years=Y)
+   - "Save X in Y years -> how much per month?" → calculate_required_monthly_savings(target_amount=X, years=Y)
    - "Monthly payment for loan X over Y years at Z%" → calculate_loan_payment
    - "How long to reach X by saving Y/month?" → calculate_savings_goal
    - "Compound interest on X for Y years at Z%" → calculate_compound_interest
@@ -53,8 +53,8 @@ Return ONLY valid JSON in this exact format:
     {{
       "step_id": 1,
       "description": "What this step does (mention estimates here)",
-      "tool_name": "calculate_required_monthly_savings" or null,
-      "tool_args": {{"target_amount": 2000000000, "years": 5}},
+      "tool_name": "calculate_savings_future_value" or null,
+      "tool_args": {{"monthly_savings": 500, "years": 3, "annual_rate_percent": 6}},
       "depends_on": []
     }}
   ]
@@ -123,12 +123,13 @@ def _parse_plan(content: str) -> ExecutionPlan:
         raise ValueError("Plan must contain at least one step.")
 
     allowed_tools = {
+        "analyze_budget",
         "calculate_compound_interest",
         "calculate_loan_payment",
         "calculate_required_monthly_savings",
+        "calculate_savings_future_value",
         "calculate_savings_goal",
         "convert_currency",
-        "analyze_budget",
     }
     steps: list[PlanStep] = []
     for raw_step in raw_steps:
@@ -171,6 +172,29 @@ def _parse_plan(content: str) -> ExecutionPlan:
     return ExecutionPlan(steps=steps, reasoning=reasoning, complexity=complexity)
 
 
+def _extract_json(text: str) -> str:
+    """Strip markdown code fence and extract JSON object."""
+    text = text.strip()
+
+    if text.startswith("```"):
+        first_nl = text.find("\n")
+        if first_nl > 0:
+            text = text[first_nl + 1 :]
+        if text.endswith("```"):
+            text = text[:-3]
+        text = text.strip()
+
+    if text.startswith("{") and text.endswith("}"):
+        return text
+
+    start = text.find("{")
+    end = text.rfind("}")
+    if start >= 0 and end > start:
+        return text[start : end + 1]
+
+    return text
+
+
 def create_plan(
     client: OpenAI,
     user_query: str,
@@ -203,7 +227,6 @@ def create_plan(
         {"role": "user", "content": user_query},
     ]
 
-    # Attempt 1: with response_format=json_object
     content: str | None = None
     try:
         response = client.chat.completions.create(
@@ -214,7 +237,6 @@ def create_plan(
         )
         content = response.choices[0].message.content
     except Exception:
-        # Attempt 2: without response_format (in case Groq rejects non-JSON)
         try:
             response = client.chat.completions.create(
                 model=model,
@@ -228,36 +250,9 @@ def create_plan(
     if not content:
         return _fallback_plan()
 
-    # Robust JSON extraction: strip markdown fences
     cleaned = _extract_json(content)
 
     try:
         return _parse_plan(cleaned)
     except (json.JSONDecodeError, ValueError, TypeError):
         return _fallback_plan()
-
-
-def _extract_json(text: str) -> str:
-    """Strip markdown code fence và cắt phần JSON trong text."""
-    text = text.strip()
-
-    # Strip ```json ... ``` or ``` ... ```
-    if text.startswith("```"):
-        first_nl = text.find("\n")
-        if first_nl > 0:
-            text = text[first_nl + 1 :]
-        if text.endswith("```"):
-            text = text[:-3]
-        text = text.strip()
-
-    # Nếu bắt đầu bằng `{` và kết thúc bằng `}` → OK
-    if text.startswith("{") and text.endswith("}"):
-        return text
-
-    # Fallback: tìm JSON object trong text
-    start = text.find("{")
-    end = text.rfind("}")
-    if start >= 0 and end > start:
-        return text[start : end + 1]
-
-    return text
