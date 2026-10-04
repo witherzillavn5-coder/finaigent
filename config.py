@@ -4,7 +4,7 @@
 MODEL_NAME = "openai/gpt-oss-120b"
 NEBIUS_BASE_URL = "https://api.groq.com/openai/v1"
 TEMPERATURE = 0.1
-MAX_TOKENS = 2000
+MAX_TOKENS = 4000
 REQUEST_TIMEOUT = 30  # giây
 MAX_RETRIES = 2
 

@@ -12,6 +12,7 @@ from tools.financial_calculators import (
     analyze_budget,
     calculate_compound_interest,
     calculate_loan_payment,
+    calculate_required_monthly_savings,
     calculate_savings_goal,
     convert_currency,
 )
@@ -21,6 +22,7 @@ ToolFunction = Callable[..., dict[str, Any]]
 TOOL_FUNCTIONS: dict[str, ToolFunction] = {
     "calculate_compound_interest": calculate_compound_interest,
     "calculate_loan_payment": calculate_loan_payment,
+    "calculate_required_monthly_savings": calculate_required_monthly_savings,
     "calculate_savings_goal": calculate_savings_goal,
     "convert_currency": convert_currency,
     "analyze_budget": analyze_budget,
@@ -82,6 +84,39 @@ def get_tool_schemas() -> list[dict[str, Any]]:
                         },
                     },
                     "required": ["principal", "annual_rate_percent", "years"],
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "calculate_required_monthly_savings",
+                "description": (
+                    "Calculate the monthly savings amount required to reach a "
+                    "target amount within N years at a given annual interest rate. "
+                    "Use this when user asks 'how much do I need to save per month "
+                    "to reach X in Y years?'."
+                ),
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "target_amount": {
+                            "type": "number",
+                            "description": "Target savings amount in VND",
+                        },
+                        "years": {
+                            "type": "number",
+                            "description": "Number of years to reach the target",
+                        },
+                        "annual_rate_percent": {
+                            "type": "number",
+                            "description": (
+                                "Expected annual interest rate as percentage "
+                                "(e.g., 5 for 5%). Defaults to 0."
+                            ),
+                        },
+                    },
+                    "required": ["target_amount", "years"],
                 },
             },
         },

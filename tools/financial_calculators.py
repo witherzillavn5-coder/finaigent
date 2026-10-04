@@ -201,14 +201,17 @@ def convert_currency(
         ("EUR", "USD"): 1.08,
     }
     pair = (source, target)
-    if pair not in exchange_rates:
+    if source == target:
+        rate_used = 1.0
+    elif pair in exchange_rates:
+        rate_used = exchange_rates[pair]
+    else:
         supported_pairs = ", ".join(f"{start}->{end}" for start, end in exchange_rates)
         raise ValueError(
             f"Unsupported currency pair {source or from_currency}->{target or to_currency}. "
             f"Supported pairs: {supported_pairs}."
         )
 
-    rate_used = exchange_rates[pair]
     converted_amount = amount * rate_used
     if not math.isfinite(converted_amount):
         raise ValueError("The converted amount is too large.")
@@ -300,6 +303,65 @@ def analyze_budget(monthly_income: float, expenses: dict[str, float]) -> dict[st
         "wants_percent": wants_percent,
         "savings_percent": savings_percent,
         "recommendations": recommendations,
+        "explanation": explanation,
+    }
+
+
+def calculate_required_monthly_savings(
+    target_amount: float,
+    years: float,
+    annual_rate_percent: float = 0,
+) -> dict[str, Any]:
+    """Calculate monthly savings needed to reach a target amount.
+
+    Inverse of calculate_savings_goal: given target and duration,
+    computes required monthly contribution.
+    """
+    _validate_finite("target_amount", target_amount)
+    _validate_finite("years", years)
+    _validate_finite("annual_rate_percent", annual_rate_percent)
+
+    if target_amount <= 0:
+        raise ValueError("target_amount must be positive.")
+    if years <= 0:
+        raise ValueError("years must be positive.")
+    if annual_rate_percent < 0:
+        raise ValueError("annual_rate_percent cannot be negative.")
+
+    months = int(years * 12)
+    if months <= 0:
+        raise ValueError("years must be at least one month.")
+    monthly_rate = annual_rate_percent / 12 / 100
+
+    if monthly_rate == 0:
+        monthly = target_amount / months
+    else:
+        try:
+            factor = math.expm1(months * math.log1p(monthly_rate)) / monthly_rate
+            monthly = target_amount / factor
+        except (OverflowError, ValueError) as error:
+            raise ValueError(
+                "The required savings calculation is outside the supported range."
+            ) from error
+
+    total_contributed = monthly * months
+    interest_earned = target_amount - total_contributed
+    if not all(math.isfinite(value) for value in (monthly, total_contributed, interest_earned)):
+        raise ValueError("The required savings calculation is outside the supported range.")
+
+    explanation = (
+        f"To reach {_format_vnd(target_amount)} in {months} months "
+        f"({years:g} years) at {annual_rate_percent:g}% annual rate, "
+        f"you need to save {_format_vnd(monthly)} per month. "
+        f"Total contributed: {_format_vnd(total_contributed)}; "
+        f"interest earned: {_format_vnd(interest_earned)}."
+    )
+
+    return {
+        "monthly_savings_required": monthly,
+        "months": months,
+        "total_contributed": total_contributed,
+        "interest_earned": interest_earned,
         "explanation": explanation,
     }
 
