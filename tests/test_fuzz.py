@@ -9,12 +9,20 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
+import pytest
 from hypothesis import HealthCheck, given, settings
 from hypothesis import strategies as st
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import guardrail
+
+
+@pytest.fixture(autouse=True)
+def disable_remote_nemo_for_fuzz(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep randomized fuzz cases local; NeMo integration has dedicated tests."""
+    monkeypatch.setattr(guardrail.nemo_guard, "_get_rails", lambda: None)
+
 
 # ============================================================
 # CẤU HÌNH CHUNG

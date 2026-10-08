@@ -17,6 +17,7 @@ from dataclasses import dataclass, field
 from openai import OpenAI
 
 import config
+import nemo_guard
 
 # --- Presidio optional import ---
 try:
@@ -417,6 +418,18 @@ def process_input(
                 processed_text=normalized,
                 findings=["prompt_injection_semantic"],
             )
+
+    # NeMo Guardrails check (NVIDIA)
+    nemo_blocked, nemo_reason = nemo_guard.check_with_nemo(normalized)
+    if nemo_blocked:
+        return GuardrailResult(
+            allowed=False,
+            layer="injection-nemo",
+            reason=nemo_reason,
+            risk_score=1.0,
+            processed_text=normalized,
+            findings=["prompt_injection_nemo"],
+        )
 
     is_comp, comp_score, comp_reason = check_financial_compliance(normalized)
     if is_comp:

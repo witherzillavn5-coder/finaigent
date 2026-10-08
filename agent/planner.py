@@ -39,6 +39,7 @@ CRITICAL RULES FOR tool_args:
    - "Save X in Y years -> how much per month?" → calculate_required_monthly_savings(target_amount=X, years=Y)
    - "Monthly payment for loan X over Y years at Z%" → calculate_loan_payment
    - "How long to reach X by saving Y/month?" → calculate_savings_goal
+   - "Compare conservative, moderate, and aggressive timelines for a goal" → scenario_planner
    - "Compound interest on X for Y years at Z%" → calculate_compound_interest
    - "Convert X USD to VND" → convert_currency
     - "How much is X BTC/ETH in VND/USD?" → convert_crypto(from_coin=X, amount=Y)
@@ -132,6 +133,7 @@ def _parse_plan(content: str) -> ExecutionPlan:
         "calculate_savings_goal",
         "convert_crypto",
         "convert_currency",
+        "scenario_planner",
     }
     steps: list[PlanStep] = []
     for raw_step in raw_steps:

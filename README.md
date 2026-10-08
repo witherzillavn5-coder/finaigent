@@ -89,6 +89,7 @@ text
 | **Compliance Monitor** | Blocks wire transfers, auth bypass, balance modification, fraud |
 | **Output Validator** | Detects system prompt leaks, risky investment advice, residual PII |
 | **Deep Moderation** | Second LLM (gpt-oss-20b) verifies response safety |
+| **NeMo Injection Classification** | NeMo Guardrails calls Llama 3.3 on Groq after the local injection patterns |
 | **Audit Logger** | SHA256 hash chain — any log tampering is detectable |
 
 ### Interface
@@ -99,6 +100,24 @@ text
 - Loading states with animated status indicator
 - Custom error/warning cards
 - Bilingual disclaimer (English + Vietnamese)
+
+### Financial tools
+
+The agent's registry provides nine financial tools:
+
+1. `calculate_compound_interest` — project compound-interest growth.
+2. `calculate_loan_payment` — estimate monthly loan payments and total interest.
+3. `calculate_savings_goal` — estimate the time to reach a savings target.
+4. `calculate_required_monthly_savings` — calculate the monthly amount needed for a target.
+5. `calculate_savings_future_value` — project the value of fixed monthly savings.
+6. `analyze_budget` — summarize needs and wants as percentages of income.
+7. `convert_currency` — convert USD, EUR, and VND using static rates.
+8. `convert_crypto` — convert supported crypto reference prices to USD or VND.
+9. `scenario_planner` — compare conservative, moderate, and aggressive timelines for a savings goal.
+
+Currency and crypto rates are static reference values, not live market prices.
+Tỷ giá chỉ mang tính tham khảo, không dùng cho quyết định giao dịch. / Rates are for
+reference only, not for trading decisions.
 
 ### Protection Mechanisms
 
@@ -116,7 +135,7 @@ text
 |-----------|-----------|
 | Language | Python 3.12 |
 | UI | Streamlit 1.64 |
-| LLM | Llama 3 / GPT-OSS (via Groq) |
+| LLM | Main assistant and NeMo injection classification via Groq |
 | PII Detection | Microsoft Presidio + spaCy |
 | API Client | OpenAI SDK |
 | Testing | pytest + Hypothesis (fuzz) |
@@ -131,7 +150,7 @@ text
 ### Requirements
 
 - Python 3.10+
-- Groq API key (free at [console.groq.com/keys](https://console.groq.com/keys))
+- Groq API key (free at [console.groq.com/keys](https://console.groq.com/keys)) for the main agent and NeMo Guardrails
 
 ### Steps
 
@@ -162,11 +181,17 @@ python -m spacy download en_core_web_sm
 
 bash
 # Windows PowerShell:
-"NEBIUS_API_KEY=gsk_YOUR_KEY_HERE" | Out-File .env -Encoding utf8
+"GROQ_API_KEY=YOUR_GROQ_KEY_HERE" | Out-File .env -Encoding utf8
 Or manually create .env:
 
 text
-NEBIUS_API_KEY=gsk_YOUR_KEY_HERE
+GROQ_API_KEY=YOUR_GROQ_KEY_HERE
+# Optional overrides:
+# NEBIUS_BASE_URL=https://api.studio.nebius.ai/v1
+# NEBIUS_MODEL=nvidia/Llama-3.1-Nemotron-70B-Instruct
+# GROQ_BASE_URL=https://api.groq.com/openai/v1
+# GROQ_MODEL=llama-3.3-70b-versatile
+# MODERATION_FAIL_CLOSED=true
 6. Run the app:
 
 bash
@@ -187,7 +212,7 @@ bash
 docker stop finaigent-app
 docker rm finaigent-app
 Testing
-Run all 84 tests:
+Run all tests:
 
 bash
 python -m pytest tests/ -v
@@ -303,6 +328,13 @@ No server-side rate limiting beyond session-scoped
 No streaming response
 
 Presidio adds ~18ms latency per request
+
+### Switching between Nebius and Groq
+
+- NeMo config lives in `nemo_config/config.yml`.
+- To use Nebius: model=`nvidia/Llama-3.1-Nemotron-70B-Instruct`, base_url=`https://api.studio.nebius.ai/v1`, env=`NEBIUS_API_KEY`.
+- To use Groq: model=`llama-3.3-70b-versatile`, base_url=`https://api.groq.com/openai/v1`, env=`GROQ_API_KEY`.
+- Both are OpenAI-compatible; only the three fields above change.
 
 Roadmap
 □ Semantic classifier for prompt injection (embeddings-based)

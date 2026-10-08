@@ -1,6 +1,7 @@
 """Financial calculators for common personal finance questions."""
 
 import math
+import re
 from typing import Any
 
 
@@ -15,6 +16,101 @@ def _validate_finite(name: str, value: float) -> None:
 def _format_vnd(amount: float) -> str:
     """Format an amount as Vietnamese dong."""
     return f"{amount:,.0f} VND"
+
+
+_GOAL_AMOUNT_PATTERN = re.compile(
+    r"(?P<amount>\d[\d,]*(?:\.\d+)?)\s*"
+    r"(?P<unit>million|millions|billion|billions|bn|m|triệu|trieu|tỷ|ty)?",
+    re.IGNORECASE,
+)
+_GOAL_UNIT_MULTIPLIERS = {
+    "m": 1_000_000,
+    "million": 1_000_000,
+    "millions": 1_000_000,
+    "triệu": 1_000_000,
+    "trieu": 1_000_000,
+    "bn": 1_000_000_000,
+    "billion": 1_000_000_000,
+    "billions": 1_000_000_000,
+    "tỷ": 1_000_000_000,
+    "ty": 1_000_000_000,
+}
+
+
+def _parse_goal_amount(goal: str) -> float:
+    """Extract a numeric target from a plain-language goal."""
+    if not isinstance(goal, str) or not goal.strip():
+        raise ValueError("goal must include a target amount.")
+    for match in _GOAL_AMOUNT_PATTERN.finditer(goal):
+        amount = float(match.group("amount").replace(",", ""))
+        multiplier = _GOAL_UNIT_MULTIPLIERS.get((match.group("unit") or "").casefold(), 1)
+        target_amount = amount * multiplier
+        if target_amount > 0 and math.isfinite(target_amount):
+            return target_amount
+    raise ValueError("goal must include a positive numeric target amount.")
+
+
+def scenario_planner(
+    goal: str,
+    current_savings: float,
+    monthly_contribution: float,
+    expected_annual_return_rate: float,
+) -> dict[str, Any]:
+    """Estimate months to a plain-language savings goal across three returns."""
+    _validate_finite("current_savings", current_savings)
+    _validate_finite("monthly_contribution", monthly_contribution)
+    _validate_finite("expected_annual_return_rate", expected_annual_return_rate)
+    if current_savings < 0:
+        raise ValueError("current_savings cannot be negative.")
+    if monthly_contribution < 0:
+        raise ValueError("monthly_contribution cannot be negative.")
+    if expected_annual_return_rate < 0:
+        raise ValueError("expected_annual_return_rate cannot be negative.")
+
+    target_amount = _parse_goal_amount(goal)
+    scenarios: list[dict[str, Any]] = []
+    for name, annual_rate_percent in (
+        ("conservative", 3.0),
+        ("moderate", 5.0),
+        ("aggressive", 7.0),
+    ):
+        if current_savings >= target_amount:
+            months: int | None = 0
+        else:
+            monthly_rate = annual_rate_percent / 100 / 12
+            if monthly_contribution == 0 and current_savings == 0:
+                months = None
+            elif monthly_rate == 0:
+                months = (
+                    math.ceil((target_amount - current_savings) / monthly_contribution)
+                    if monthly_contribution > 0
+                    else None
+                )
+            else:
+                contribution_to_rate = monthly_contribution / monthly_rate
+                try:
+                    month_estimate = math.log(
+                        (target_amount + contribution_to_rate)
+                        / (current_savings + contribution_to_rate)
+                    ) / math.log1p(monthly_rate)
+                    months = max(0, math.ceil(month_estimate))
+                except (ValueError, ZeroDivisionError, OverflowError):
+                    months = None
+
+        scenarios.append(
+            {
+                "scenario": name,
+                "annual_return_percent": annual_rate_percent,
+                "months_to_goal": months,
+            }
+        )
+
+    return {
+        "goal": goal,
+        "target_amount": target_amount,
+        "assumed_annual_return_percent": expected_annual_return_rate,
+        "scenarios": scenarios,
+    }
 
 
 def calculate_compound_interest(

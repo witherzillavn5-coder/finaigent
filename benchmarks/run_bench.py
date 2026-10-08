@@ -124,7 +124,7 @@ def main() -> None:
             guardrail.process_input(text)
     elapsed = time.perf_counter() - start
     total = 100 * len(SAMPLE_INPUTS)
-    print(f"Processed {total} inputs in {elapsed:.2f}s " f"({total / elapsed:.0f} inputs/s)")
+    print(f"Processed {total} inputs in {elapsed:.2f}s ({total / elapsed:.0f} inputs/s)")
 
     print("\n" + "=" * 90)
     print("Done.")

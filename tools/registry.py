@@ -17,6 +17,7 @@ from tools.financial_calculators import (
     calculate_savings_goal,
     convert_crypto,
     convert_currency,
+    scenario_planner,
 )
 
 ToolFunction = Callable[..., dict[str, Any]]
@@ -30,6 +31,7 @@ TOOL_FUNCTIONS = {
     "calculate_savings_goal": calculate_savings_goal,
     "convert_crypto": convert_crypto,
     "convert_currency": convert_currency,
+    "scenario_planner": scenario_planner,
 }
 
 
@@ -197,6 +199,44 @@ def get_tool_schemas() -> list[dict[str, Any]]:
                         },
                     },
                     "required": ["amount", "from_coin"],
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "scenario_planner",
+                "description": (
+                    "Estimate months to reach a numeric savings target mentioned "
+                    "in a goal such as 'buy a car worth 500 million VND'. Returns "
+                    "conservative 3%, moderate 5%, and aggressive 7% scenarios."
+                ),
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "goal": {
+                            "type": "string",
+                            "description": "Goal description containing a numeric target and optional million/billion unit",
+                        },
+                        "current_savings": {
+                            "type": "number",
+                            "description": "Current savings in VND",
+                        },
+                        "monthly_contribution": {
+                            "type": "number",
+                            "description": "Monthly contribution in VND",
+                        },
+                        "expected_annual_return_rate": {
+                            "type": "number",
+                            "description": "User's expected annual return rate as a percentage",
+                        },
+                    },
+                    "required": [
+                        "goal",
+                        "current_savings",
+                        "monthly_contribution",
+                        "expected_annual_return_rate",
+                    ],
                 },
             },
         },

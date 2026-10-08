@@ -1,5 +1,7 @@
 """Cấu hình tập trung cho FinGuard Agent."""
 
+import os
+
 # Model
 MODEL_NAME = "openai/gpt-oss-120b"
 NEBIUS_BASE_URL = "https://api.groq.com/openai/v1"
@@ -26,6 +28,12 @@ LOG_FILE = "audit.jsonl"
 # Model dùng cho output moderation
 MODERATION_MODEL_NAME = "openai/gpt-oss-20b"
 MODERATION_ENABLED = True
+MODERATION_FAIL_CLOSED = os.getenv("MODERATION_FAIL_CLOSED", "true").strip().lower() not in {
+    "0",
+    "false",
+    "no",
+    "off",
+}
 
 # Disclaimer song ngữ
 DISCLAIMER = (

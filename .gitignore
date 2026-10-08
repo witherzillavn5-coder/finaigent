@@ -1,5 +1,6 @@
 ﻿.env
 logs/
+guardrail_log.jsonl
 __pycache__/
 .pytest_cache/
 *.pyc

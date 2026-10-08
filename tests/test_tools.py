@@ -152,9 +152,9 @@ def test_budget_zero_income() -> None:
         fc.analyze_budget(0, {"rent": 1_000_000})
 
 
-def test_registry_has_5_tools() -> None:
-    """Register all eight financial calculators."""
-    assert len(registry.get_tool_names()) == 8
+def test_registry_has_9_tools() -> None:
+    """Register all nine financial calculators."""
+    assert len(registry.get_tool_names()) == 9
 
 
 def test_get_tool_schemas_format() -> None:

@@ -62,6 +62,13 @@ PARAM_ALIASES: dict[str, dict[str, str]] = {
         "expense": "expenses",
         "expense_list": "expenses",
     },
+    "scenario_planner": {
+        "goal_amount": "goal",
+        "savings": "current_savings",
+        "monthly_savings": "monthly_contribution",
+        "expected_return_rate": "expected_annual_return_rate",
+        "annual_return_rate": "expected_annual_return_rate",
+    },
 }
 
 
